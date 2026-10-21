@@ -18,7 +18,7 @@ export type LimitCode =
   | 'ENDPOINT_CORROBORATION'
   | 'PROGRAMDATA_REVERSE_LOOKUP'
   | 'FEED_BACKPRESSURE'
-  | 'GRPC_LIVE_PATH_UNVERIFIED';
+  | 'GRPC_LIVE_PATH_MOCKED';
 
 export type LimitNote = {
   code: LimitCode;
@@ -51,12 +51,12 @@ export const LIMIT_NOTES: LimitNote[] = [
     always: true,
   },
   {
-    code: 'GRPC_LIVE_PATH_UNVERIFIED',
-    title: 'The Geyser path is typechecked and unit-tested, but was not run against a live endpoint',
+    code: 'GRPC_LIVE_PATH_MOCKED',
+    title: 'The Geyser wire format is proven against real bytes; the socket beneath it is not',
     blind:
-      'The subscription request, the account-update decoding and the classification logic in `src/rpc/yellowstone.ts` were written against the generated types of `@triton-one/yellowstone-grpc` 9.0.1 and exercised with an injected fake stream. No Geyser endpoint was reachable in the session that built it, so handshake, auth-token handling and replay semantics are unverified in the field. Two of its field shapes already contradict the usual write-ups (owner/account are base58 strings, not bytes; lamports/writeVersion are decimal strings), which is what to expect of a layer nobody has poked at.',
+      'What is proven: `test/yellowstone-live.test.ts` builds a `SubscribeUpdate` frame with the package’s own generated `encode`, feeds the resulting **raw protobuf bytes** into the feed, and asserts a captured mainnet `ProgramData` account survives the trip byte-for-byte — pubkey, data length, lamports, `writeVersion`, slot — and that `decodeProgramData` recovers the real upgrade authority from those bytes. Unclassifiable, truncated and `isStartup` frames are also covered. What is NOT proven: HTTP/2 handshake, x-token auth, `isReplay` semantics, ping/pong keepalive, and reconnect. Those live below the seam any test in this repo can reach without an endpoint. `test/transports.test.ts` additionally exercises the object-level fake; neither substitutes for the other.',
     mitigation:
-      'Run `dot watch --yellowstone <url>` against a real endpoint and check `feed.statsView()`: `updates` should rise, `startupSkipped` should be non-zero on a replay, `layoutMismatch` should stay near zero. Treat a flat `updates` counter with no error as the signature of a filter that matches nothing, not as an idle chain.',
+      'Set `YELLOWSTONE_ENDPOINT` (and `YELLOWSTONE_TOKEN`) to un-skip the live test in `yellowstone-live.test.ts`, then run `dot watch --yellowstone <url>` and read `feed.statsView()`: `updates` must rise, `startupSkipped` should be non-zero on a replay, `layoutMismatch` should stay near zero. A flat `updates` counter with no error is the signature of a filter that matches nothing — which is exactly the failure mode of passing bytes where this API wants base58 strings — not evidence of a quiet chain.',
     always: false,
   },
   {

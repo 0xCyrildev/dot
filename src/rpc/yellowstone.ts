@@ -91,6 +91,25 @@ export type YellowstoneOptions = {
   clientFactory?: (opts: YellowstoneOptions) => GeyserLike;
 };
 
+/** True when a stream payload is an undecoded protobuf frame rather than an object. */
+export function isBytes(payload: unknown): payload is Uint8Array {
+  return payload instanceof Uint8Array || Buffer.isBuffer(payload);
+}
+
+/**
+ * Decode one `SubscribeUpdate` frame. Kept as a named export so a test can prove the
+ * round trip against the package's own generated codec instead of against a hand
+ * written object literal that could quietly disagree with the real wire format.
+ */
+export function decodeUpdate(bytes: Uint8Array): SubscribeUpdate {
+  return Geyser.SubscribeUpdate.decode(bytes);
+}
+
+/** Encode one frame; used to build test payloads from real account bytes. */
+export function encodeUpdate(update: SubscribeUpdate): Uint8Array {
+  return Geyser.SubscribeUpdate.encode(update).finish();
+}
+
 /** The slice of the generated client Dot depends on, so tests can fake exactly this. */
 export interface GeyserLike {
   subscribe(req: SubscribeRequest): Promise<{ on(ev: string, cb: (...a: any[]) => void): void; destroy?(): void; cancel?(): void }>;
@@ -187,7 +206,7 @@ export class YellowstoneUpgradeFeed extends EventEmitter {
       });
     }
     this.stats.connected = true;
-    this.stream.on('data', (update: SubscribeUpdate) => this.handle(update));
+    this.stream.on('data', (payload: SubscribeUpdate | Uint8Array) => this.ingest(payload));
     this.stream.on('error', (err: Error) => {
       this.stats.errors++;
       this.emit('error', new DotError('RPC_TRANSPORT', `yellowstone stream error: ${err.message}`, {}));
@@ -214,6 +233,18 @@ export class YellowstoneUpgradeFeed extends EventEmitter {
     } catch {
       return '<unparseable-endpoint>';
     }
+  }
+
+  /**
+   * Accept either a decoded update or raw protobuf wire bytes, and decode here.
+   *
+   * The SDK's own duplex stream decodes before emitting, but a gRPC-web endpoint, a
+   * hand-rolled transport, or a recorded capture delivers *bytes*. Taking both means
+   * the wire format is exercised by tests that never open a socket, rather than being
+   * assumed by the type of the injected fake.
+   */
+  ingest(payload: SubscribeUpdate | Uint8Array): void {
+    this.handle(isBytes(payload) ? decodeUpdate(payload) : payload);
   }
 
   private handle(update: SubscribeUpdate): void {
