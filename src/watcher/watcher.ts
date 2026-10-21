@@ -37,6 +37,23 @@ export type UpgradeEvent = {
   source: 'baseline' | 'poll' | 'ws';
 };
 
+export type WatchStatus = {
+  mode: 'poll' | 'ws';
+  network: string;
+  targets: number;
+  observed: number;
+  ticks: number;
+  lastTickAt: number | null;
+  lastReadSlot: number;
+  eventsEmitted: number;
+  consecutiveFailures: number;
+  running: boolean;
+  cursorPersisted: boolean;
+  note: string;
+  feed?: unknown;
+  dispatcher?: unknown;
+};
+
 export type WatcherOptions = {
   /** Emit an event for the very first observation of each target. Default false. */
   fireOnBaseline?: boolean;
@@ -76,6 +93,15 @@ export class UpgradeWatcher extends EventEmitter {
   private subIds = new Map<string, number>();
   private running = false;
   private consecutiveFailures = 0;
+  private ticks = 0;
+  private lastTickAt = 0;
+  private eventsEmitted = 0;
+  /**
+   * Highest account slot this daemon has read. That is the cursor: a polling watcher
+   * has no ledger position of its own, and pretending otherwise would let a report
+   * claim continuity across restarts it does not have.
+   */
+  private lastReadSlot = 0;
 
   constructor(client: SolanaClient, targets: WatchTarget[], opts: WatcherOptions = {}) {
     super();
@@ -92,6 +118,29 @@ export class UpgradeWatcher extends EventEmitter {
 
   snapshot(): ObservedState[] {
     return [...this.state.values()];
+  }
+
+  /**
+   * The watcher's own position. `cursorPersisted` is false unless a caller writes
+   * this out, because a daemon that restarts and reports a cursor it never restored
+   * is reporting a gap as a sweep.
+   */
+  status(): WatchStatus {
+    return {
+      mode: this.opts.mode,
+      network: 'unknown',
+      targets: this.targets.length,
+      observed: this.state.size,
+      ticks: this.ticks,
+      lastTickAt: this.lastTickAt || null,
+      lastReadSlot: this.lastReadSlot,
+      eventsEmitted: this.eventsEmitted,
+      consecutiveFailures: this.consecutiveFailures,
+      running: this.running,
+      cursorPersisted: false,
+      note:
+        'a polling watcher has no ledger cursor; lastReadSlot is the highest account slot this process read, and nothing observed before the process started',
+    };
   }
 
   async start(): Promise<void> {
@@ -127,6 +176,8 @@ export class UpgradeWatcher extends EventEmitter {
   /** One read of every target. Returns the events produced, for tests and for `--once`. */
   async tick(source: UpgradeEvent['source']): Promise<UpgradeEvent[]> {
     const events: UpgradeEvent[] = [];
+    this.ticks++;
+    this.lastTickAt = Date.now();
     for (const target of this.targets) {
       try {
         const ev = await this.observe(target, source);
@@ -146,12 +197,15 @@ export class UpgradeWatcher extends EventEmitter {
       }
     }
     events.forEach((e) => this.emit('upgrade', e));
+    this.eventsEmitted += events.length;
     return events;
   }
 
   private async observe(target: WatchTarget, source: UpgradeEvent['source']): Promise<UpgradeEvent | null> {
     const programData = deriveProgramData(target.program);
-    const account = await this.client.getAccountInfo(programData);
+    const raw = await this.client.getRawAccountInfo(programData);
+    const account = raw.account;
+    if (raw.slot > this.lastReadSlot) this.lastReadSlot = raw.slot;
     const previous = this.state.get(target.program) ?? null;
 
     if (account === null) {

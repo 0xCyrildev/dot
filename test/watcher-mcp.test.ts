@@ -128,17 +128,17 @@ describe('MCP server surface', () => {
     return client;
   }
 
-  it('exposes exactly the two documented tools', async () => {
+  it('exposes exactly the four documented tools', async () => {
     const client = await connected();
     const listed = await client.listTools();
-    expect(listed.tools.map((t) => t.name).sort()).toEqual(['solana_blast_radius', 'solana_evaluate_upgrade']);
+    expect(listed.tools.map((t) => t.name).sort()).toEqual(['dot_blast_radius', 'dot_evaluate_upgrade', 'dot_limits', 'dot_watch_status']);
     for (const t of listed.tools) expect(t.description!.length).toBeGreaterThan(40);
   });
 
   it('rejects a too-short program at the schema boundary', async () => {
     const client = await connected();
     const res = await client.callTool({
-      name: 'solana_blast_radius',
+      name: 'dot_blast_radius',
       arguments: { program: 'not-a-pubkey', budget: { maxRpcCalls: 5, maxSignatures: 5, maxLlmTokens: 0, maxWallMs: 5000 } },
     });
     expect(res.isError).toBe(true);
@@ -148,7 +148,7 @@ describe('MCP server surface', () => {
   it('rejects a 32-character string that is not valid base58, from inside the tool', async () => {
     const client = await connected();
     const res = await client.callTool({
-      name: 'solana_blast_radius',
+      name: 'dot_blast_radius',
       // Right length, illegal characters (0OIL): schema passes, decoder must not.
       arguments: { program: '0O0O0O0O0O0O0O0O0O0O0O0O0O0O0O0O0O0O', budget: { maxRpcCalls: 5, maxSignatures: 5, maxLlmTokens: 0, maxWallMs: 5000 } },
     });
@@ -159,7 +159,7 @@ describe('MCP server surface', () => {
   it('declares the budget as a required input so a caller cannot accidentally ask for an unbounded scan', async () => {
     const client = await connected();
     const tools = await client.listTools();
-    const blast = tools.tools.find((t) => t.name === 'solana_blast_radius')!;
+    const blast = tools.tools.find((t) => t.name === 'dot_blast_radius')!;
     const schema = blast.inputSchema as { properties: Record<string, unknown>; required?: string[] };
     expect(Object.keys(schema.properties)).toContain('budget');
     expect(schema.required).toContain('budget');
