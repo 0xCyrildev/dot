@@ -171,6 +171,14 @@ export type WireSignatureInfo = {
   confirmationStatus?: string;
 };
 
+/** `getSignatureStatuses` — the slot a signature is in, and whether it is final. */
+export type WireSignatureStatus = {
+  slot: number;
+  confirmations: number | null;
+  err: WireTransactionError;
+  confirmationStatus?: string | null;
+};
+
 export type WireAccountState<T = unknown> = {
   lamports: number;
   owner: PubkeyString;

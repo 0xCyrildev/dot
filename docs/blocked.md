@@ -15,28 +15,43 @@ a currently working command. The verified forms are `npm ci && npm run build` +
 `node dist/cli/index.js …`, or a tarball install. Unblocks with registry auth; the
 manifest name and `bin` map are already scoped.
 
-## 2. Live mainnet verification of the new commands — BLOCKED (no egress)
+## 2. Live mainnet verification — PARTLY UNBLOCKED (egress returned 2026-10-21)
 
-Every Solana RPC endpoint reachable by name from this box (`api.mainnet-beta`,
-`solana-rpc.publicnode.com`, `rpc.ankr.com`) fails with `UND_ERR_CONNECT_TIMEOUT` or
-`ENOTFOUND` for the whole session, while `registry.npmjs.org` works — so it is
-egress-specific, not a dead network.
+Re-measured rather than inherited: this section previously said "no egress". `getHealth`
+now answers `ok` from `https://api.mainnet-beta.solana.com` and
+`https://solana-rpc.publicnode.com`; `https://rpc.ankr.com/solana` returns HTTP 403
+`API key is not allowed to access blockchain`. So two public endpoints work and the third
+needs a key.
 
-Not done as a result:
-- `dot calibrate` has never measured a real block. Its cost model still says
+Measured live, artifact in the repo (`docs/live-verify-2026-10-21.json` / `.md`, and the
+same numbers reproduced on a second run):
+
+- `dot analyze FuCKerMR… --secondary-rpc … --verify` against a program upgraded on the real
+  loader index: 18 RPC calls, 8 traces, `attributionQuality: logs`, 3 edges, 21 CPI
+  occurrences of which 20 failed, `lamportsRouted 63,723,520`, tier `P2`, `cappedBy`
+  "only 32% of the planned sample was retrievable from the node", exit 4 with a priced
+  hypothesis.
+- Discovery works: `getSignaturesForAddress(BPFLoaderUpgradeable)` + local PDA
+  re-derivation produced a real (program, programData) pair from live data.
+- Two providers disagree about *retention*, not about the chain: one endpoint had a sampled
+  signature the other reported pruned. Same-slot account comparison is impossible over
+  plain RPC — concurrent reads landed 9 slots apart, and `minContextSlot` is a lower
+  bound. That is why the mutable-account checks read `inconclusive` and is stated in
+  `CANNOT_PROVE` rather than hidden.
+
+Still not done:
+- `dot calibrate` has never measured a real block; the cost model still says
   `defaults_unverified`.
-- `dot blast-radius` has never seen a real loader history, so its ranking model is
-  tested only against constructed fixtures.
+- `dot blast-radius` has ranked one real loader window, not a full sweep, and its ranking
+  model is still mostly fixture-tested.
 - `dot analyze --seeds` has summed no real vault. The derivation is proven against a
-  captured mainnet ProgramData PDA (`test/seeds.test.ts`), but no balance read has run
-  against a live node.
-- `dot analyze <Jupiter>` for the demo graph. The only real mainnet artifact in the
-  repo is `docs/live-run-2026-10-21.json`, captured before these features existed and
-  from the endpoint that then went on to refuse history.
+  captured mainnet ProgramData PDA (`test/seeds.test.ts`); no live balance read has run.
+- No second *independent provider* — publicnode and mainnet-beta are both public
+  endpoints, and the report says a hostname is not proof of independence.
 
-Unblocks with any working RPC URL. `docs/live-run-2026-10-21.json` is kept as the
-example because it is a genuine report, including the `-32015` refusal — an honest
-failure is better evidence than a convenient success.
+`docs/live-run-2026-10-21.json` is kept as the older example because it is a genuine
+report, including the `-32015` refusal: an honest failure is better evidence than a
+convenient success.
 
 ## 4. Bytecode diff validated against real compiled Anchor bytecode — BLOCKED (no toolchain, no artifact)
 

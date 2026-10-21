@@ -254,6 +254,20 @@ labelled uncorroborated), `both_failed` (halt, no conclusion). Each endpoint get
 endpoints are the tool's input, and a contradiction is evidence about the tool, not the program. Nothing
 downstream of that read is trustworthy, including the absence of findings.
 
+**`--verify` asks the second node about the report, not just the upgrade.** `chain_verified`
+cross-checks four things: the `ProgramData` bytes, the `Program` pointer, a sample of the
+transactions the edges were built from (instructions, accounts, slot and balance deltas —
+`logMessages` excluded, because providers truncate differently), and what each node says
+about finality. Verdicts are `agree`, `contradict`, `inconclusive`, `unconfirmed`, and the
+last two are not the same sentence: measured on mainnet, two public endpoints asked
+*concurrently* still answered the same account read 9 slots apart, and `minContextSlot` is a
+lower bound, so a mutable account simply cannot be compared at one moment over plain RPC.
+Finalized transactions can. `chain_verified: true` therefore means two endpoints described
+the same chain, and the report prints beside it what that still does not prove — no
+inclusion proof exists in core RPC, and a hostname is not proof that the two endpoints are
+independent providers. See `docs/live-verify-2026-10-21.md` for a real run, which comes back
+`false` for exactly these reasons.
+
 ## Usage
 
 ### CLI
@@ -421,7 +435,7 @@ prose in a README, so a report can name the ones that actually applied to it.
 | Code | What Dot cannot see |
 |---|---|
 | `HISTORY_RETENTION` | `getTransaction` returns whatever the node kept. Public endpoints retain days, not the program's life; **the live run above got `-32015` on every trace fetch**. A program whose integrators were busy last year can look dependent-free because the traces are gone. Fix: run continuously, or an archive node, or ingest from a live feed. |
-| `SINGLE_NODE_TRUST` | Every number is one endpoint's word. Providers cache, filter, lag, and rate-limit; three public endpoints in this session went from working to `ETIMEDOUT` mid-build. `--secondary-rpc` now makes the load-bearing read corroborated. |
+| `SINGLE_NODE_TRUST` | Every number is one endpoint's word. Providers cache, filter, lag, and rate-limit; three public endpoints in this session went from working to `ETIMEDOUT` mid-build. `--secondary-rpc` now makes the load-bearing read corroborated, and `--verify` puts the second node's answer about the sampled transactions in the report as `chain_verified`. |
 | `NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION` | Core JSON-RPC has no "all loader accounts" feed — that is why `src/rpc/yellowstone.ts` exists. `accountSubscribe` is per-account. |
 | `GRPC_LIVE_PATH_UNVERIFIED` | **The Geyser transport is typechecked against generated types and unit-tested with a fake stream, but no live endpoint was reachable while it was written.** Handshake, auth and replay semantics are unverified in the field. |
 | `CPI_DEPTH_ATTRIBUTION` | `innerInstructions` is flat. Depth comes from `stackHeight` or logs; both are optional and logs truncate. `attributionQuality` always says which. |

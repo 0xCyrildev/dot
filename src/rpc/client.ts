@@ -5,6 +5,7 @@ import type {
   WireAccountState,
   WireGetTransactionResult,
   WireSignatureInfo,
+  WireSignatureStatus,
 } from './wire.js';
 import type { RpcTransport, WithContext } from './transport.js';
 
@@ -42,7 +43,8 @@ export type RpcMethod =
   | 'getProgramAccounts'
   | 'getBlock'
   | 'getBlocks'
-  | 'getBlocksWithLimit';
+  | 'getBlocksWithLimit'
+  | 'getSignatureStatuses';
 
 export type RetryPolicy = { maxAttempts: number; baseDelayMs: number };
 
@@ -216,6 +218,19 @@ export class SolanaClient {
         data: Buffer.from(b64, 'base64'),
       },
     };
+  }
+
+  /**
+   * Where the node says these signatures live. `null` means the node does not know —
+   * outside retention and not in the recent ledger — which is recorded as unknown, not
+   * as "not finalized".
+   */
+  async getSignatureStatuses(signatures: string[]): Promise<Array<WireSignatureStatus | null>> {
+    const res = await this.call<{ value: Array<WireSignatureStatus | null> }>('getSignatureStatuses', [
+      signatures,
+      { searchTransactionHistory: true },
+    ]);
+    return res?.value ?? [];
   }
 
   /**

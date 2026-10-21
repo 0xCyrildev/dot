@@ -6,7 +6,7 @@ import type { LimitNote } from './limits.js';
 import type { ClientStats } from './rpc/client.js';
 
 export type StageTrace = {
-  stage: 'perceive' | 'decide' | 'act' | 'evaluate' | 'report';
+  stage: 'perceive' | 'decide' | 'act' | 'evaluate' | 'verify' | 'report';
   atMs: number;
   note: string;
   rpcCallsAfter: number;
@@ -47,6 +47,12 @@ export type DotReport = {
   cappedBy: string | null;
   /** Which stage ended the run. `decide` means Dot declined to spend on a trace pull. */
   stoppedAt: 'perceive' | 'decide' | 'act' | 'evaluate' | 'report';
+  /**
+   * The stage-by-stage record, with the call count at each mark. Collected because a
+   * reader auditing a tier needs to see the order things were learned in, and which
+   * stages were skipped — a summary that hides whether `verify` ran is not auditable.
+   */
+  stages: StageTrace[];
   stopNote: string;
   decision: Record<string, unknown> | null;
   /** Programs co-invoked with the upgrade authority, when the widen path ran. Not dependents. */
@@ -84,6 +90,11 @@ export type DotReport = {
   narrative?: Narrative;
   /** The claim the agent would test with more budget, and its re-test outcome. */
   hypothesis?: import('./agent/hypothesis.js').Hypothesis;
+  /**
+   * `--verify`: what a second endpoint said about the accounts and transactions this
+   * report is built from. Absent means the check was not asked for — not that it failed.
+   */
+  chainVerified?: import('./rpc/verifier.js').ChainVerification;
   /** Structural bytecode diff (Anchor entrypoints) when a prior image was obtainable. */
   bytecodeDiff?: import('./state/bytecodeDiff.js').BytecodeDiff;
   bytecodeProvenance?: string | null;
@@ -247,6 +258,27 @@ export function renderMarkdown(r: DotReport): string {
         }
       }
     }
+  }
+
+  if (r.chainVerified) {
+    const cv = r.chainVerified;
+    L.push('');
+    L.push(`## Chain verification — \`chain_verified: ${cv.verified}\``);
+    L.push('');
+    L.push(`Asked: ${cv.endpoints.map((e) => `\`${e}\``).join(', ') || 'no endpoints recorded'}${cv.slot !== null ? ` at slot ${cv.slot}` : ''}, ${cv.sampledSignatures} sampled signature(s).`);
+    if (!cv.verified) L.push(`**Why not:** ${cv.reason}`);
+    L.push('');
+    L.push('| check | verdict | coverage | what was compared |');
+    L.push('| --- | --- | --- | --- |');
+    for (const c of cv.checks) L.push(`| \`${c.name}\` | ${c.verdict} | ${c.coverage} | ${c.detail} (${c.rpcCalls} call) |`);
+    L.push('');
+    L.push(`_What this does not prove:_ ${cv.cannotProve}`);
+  }
+
+  if (r.stages.length > 0) {
+    L.push('');
+    L.push('## Run stages');
+    for (const s of r.stages) L.push(`- \`${s.stage}\` @ ${s.atMs}ms (${s.rpcCallsAfter} call(s) spent): ${s.note}`);
   }
 
   L.push('');

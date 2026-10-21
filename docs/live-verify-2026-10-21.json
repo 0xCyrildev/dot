@@ -1,0 +1,580 @@
+{
+  "schema": "dot.report.v1",
+  "generatedAt": "2026-10-21T17:57:38.564Z",
+  "program": "FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf",
+  "mode": "rules",
+  "programData": "BmArTGeoddLk3tts8AvH2ivNfVUtoHCX6V7dKDaVD4Xq",
+  "event": "upgrade",
+  "tier": "P2",
+  "tierSource": "exposure",
+  "score": 51,
+  "confidence": "low",
+  "components": [
+    {
+      "name": "authority_posture",
+      "points": 30,
+      "max": 30,
+      "why": "a single key can replace the program with no threshold and no delay"
+    },
+    {
+      "name": "change_magnitude",
+      "points": 10,
+      "max": 24,
+      "why": "bytecode size moved"
+    },
+    {
+      "name": "dependents",
+      "points": 0,
+      "max": 22,
+      "why": "0 direct, 0 transitive attributed callers"
+    },
+    {
+      "name": "cpi_volume",
+      "points": 3,
+      "max": 12,
+      "why": "21 attributed CPI occurrences in the sample"
+    },
+    {
+      "name": "value_routed",
+      "points": 9,
+      "max": 14,
+      "why": "63723520 lamports moved (deduped per account per transaction; edge-sum attribution totals 63723520, which overcounts) across 0 mint(s)"
+    }
+  ],
+  "cappedBy": "only 32% of the planned sample was retrievable from the node",
+  "stoppedAt": "report",
+  "stopNote": "completed",
+  "stages": [
+    {
+      "stage": "perceive",
+      "atMs": 2,
+      "note": "reading ProgramData for FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf",
+      "rpcCallsAfter": 0
+    },
+    {
+      "stage": "perceive",
+      "atMs": 6937,
+      "note": "posture=eoa authority=w3mDDNmTLnp9FUfjdPrGZt7GyTBWzjyF5wGvzdQGDaD priorDependents=unobserved",
+      "rpcCallsAfter": 1
+    },
+    {
+      "stage": "decide",
+      "atMs": 6938,
+      "note": "rules: proceed=true plan={\"signatures\":8,\"rpcCalls\":9,\"useLlm\":false,\"wantedSignatures\":25}",
+      "rpcCallsAfter": 1
+    },
+    {
+      "stage": "act",
+      "atMs": 13074,
+      "note": "strategy=per_signature traces=8 pruned=0 errors=0 edges=3 quality=logs",
+      "rpcCallsAfter": 10
+    },
+    {
+      "stage": "evaluate",
+      "atMs": 13076,
+      "note": "score=51 tier=P2 confidence=low direct=0 transitive=0",
+      "rpcCallsAfter": 10
+    },
+    {
+      "stage": "verify",
+      "atMs": 31504,
+      "note": "false: every check had two sources, but programdata_bytes, transaction_roundtrip, signature_finality could not be compared — absence of a contradiction is not agreement",
+      "rpcCallsAfter": 18
+    }
+  ],
+  "hypothesis": {
+    "claimKind": "authority_risk",
+    "claim": "the exposure here is the key, not the code: one signature can replace the program",
+    "evidenceFor": [
+      "a single key can sign the next replacement with no threshold and no delay"
+    ],
+    "evidenceAgainst": [
+      "no instruction-level view: the bytecode diff is bytecode_only or absent, so nothing here distinguishes a new entrypoint from a recompiled constant",
+      "no dependents were attributed in this sample — but that is what a thin sample always looks like",
+      "the sample Dot could afford (8) is below the 25 its own risk rule asked for"
+    ],
+    "testPlan": [
+      {
+        "action": "widen the sample to the authority’s own transaction history to enumerate what else that key controls",
+        "requestedRpcCalls": 17,
+        "outcomeIfPositive": "the key reaches more programs than this one; compromise is a multi-protocol event, not a single-program one"
+      },
+      {
+        "action": "check whether this authority signed upgrades for the same programs in the previous epoch (habit vs anomaly)",
+        "requestedRpcCalls": 17,
+        "outcomeIfPositive": "the cadence is habitual, which weakens the anomaly claim and strengthens the routine one"
+      }
+    ],
+    "falsifier": "if the widened sample shows this authority signing upgrades for this program and no other program's ProgramData in the window, the blast radius is one program — the multi-protocol reading is denied",
+    "derivedFrom": {
+      "posture": "eoa",
+      "authority_rotated": false,
+      "bytecode_confidence": "absent",
+      "entrypoints_added": 0,
+      "entrypoints_removed": 0,
+      "undeclared_entrypoints": 0,
+      "direct_dependents": 0,
+      "co_controlled": 0,
+      "wanted_signatures": 25,
+      "affordable_signatures": 8
+    }
+  },
+  "chainVerified": {
+    "verified": false,
+    "reason": "every check had two sources, but programdata_bytes, transaction_roundtrip, signature_finality could not be compared — absence of a contradiction is not agreement",
+    "endpoints": [
+      "https://api.mainnet-beta.solana.com/",
+      "https://solana-rpc.publicnode.com/"
+    ],
+    "slot": 459721717,
+    "checks": [
+      {
+        "name": "programdata_bytes",
+        "verdict": "inconclusive",
+        "coverage": "corroborated",
+        "detail": "endpoints answered at different slots (459721717, 459721723) — the chain moved between the reads, so differing bytes here are progress, not a contradiction, and nothing is concluded",
+        "passed": false,
+        "rpcCalls": 2
+      },
+      {
+        "name": "program_pointer",
+        "verdict": "agree",
+        "coverage": "corroborated",
+        "detail": "FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf: identical (95bc176b7a8dbb9e) on 2 endpoints at slot 459721727",
+        "passed": true,
+        "rpcCalls": 2
+      },
+      {
+        "name": "transaction_roundtrip",
+        "verdict": "inconclusive",
+        "coverage": "corroborated",
+        "detail": "1/4 sampled transaction(s) could not be compared — 2FbJ3DJL…[872ba10bd1a3f39c/pruned]: pruned or refused history is not corroboration",
+        "passed": false,
+        "rpcCalls": 8
+      },
+      {
+        "name": "signature_finality",
+        "verdict": "inconclusive",
+        "coverage": "corroborated",
+        "detail": "3/4 sampled signature(s) described identically by every endpoint that could see them; 1 not visible to at least one endpoint (retention differs between providers, which is a gap in what can be compared, not a disagreement)",
+        "passed": false,
+        "rpcCalls": 2
+      }
+    ],
+    "sampledSignatures": 4,
+    "cannotProve": "Two endpoints describing the same bytes and the same transactions is corroboration, not proof. Core RPC exposes no inclusion proof and no slot-hashes read, so nothing here shows a sampled transaction is in the canonical ledger, and no check can tell whether the two endpoints are genuinely independent sources or one provider answering twice. Measured on mainnet 2026-10-21: two public endpoints asked concurrently still answered the same getAccountInfo 9 slots apart, and `minContextSlot` is a lower bound rather than a fix — so a *mutable* account cannot be compared at one moment over plain RPC at all. Finalized transactions can be, because they do not change."
+  },
+  "coControlledPrograms": [],
+  "widenNote": "widen skipped: 8 trace(s) parsed at 32% coverage — an empty dependent set here is a coverage gap, not a finding",
+  "decision": {
+    "source": "rules",
+    "proceed": true,
+    "confidence": "low",
+    "rationale": "Wants 25 signature(s); only 8 affordable. authority is a single key: a one-wallet compromise can push a replacement immediately, with no threshold to wait on; no prior graph for this program: blast radius is unobserved, which is not the same as zero",
+    "signals": {
+      "kind": "upgrade",
+      "authority_posture": "eoa",
+      "bytecode_changed": true,
+      "authority_changed": false,
+      "size_changed": true,
+      "size_delta_pct": null,
+      "dependents_known": null,
+      "signatures_available": null,
+      "idl_available": false,
+      "forced": false,
+      "wanted_signatures": 25,
+      "affordable_signatures": 8,
+      "remaining_rpc": 59
+    },
+    "plan": {
+      "signatures": 8,
+      "rpcCalls": 9,
+      "useLlm": false,
+      "wantedSignatures": 25
+    },
+    "escalation": {
+      "kind": "needs_more_budget",
+      "requestedRpcCalls": 17,
+      "reason": "eoa authority and no prior graph: a sample of 8 signature(s) cannot distinguish \"no dependents\" from \"dependents outside the sample\"",
+      "whatItWouldConfirm": "a 25-signature sample of transactions touching FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf",
+      "hypothesis": {
+        "claimKind": "authority_risk",
+        "claim": "the exposure here is the key, not the code: one signature can replace the program",
+        "evidenceFor": [
+          "a single key can sign the next replacement with no threshold and no delay"
+        ],
+        "evidenceAgainst": [
+          "no instruction-level view: the bytecode diff is bytecode_only or absent, so nothing here distinguishes a new entrypoint from a recompiled constant",
+          "no dependents were attributed in this sample — but that is what a thin sample always looks like",
+          "the sample Dot could afford (8) is below the 25 its own risk rule asked for"
+        ],
+        "testPlan": [
+          {
+            "action": "widen the sample to the authority’s own transaction history to enumerate what else that key controls",
+            "requestedRpcCalls": 17,
+            "outcomeIfPositive": "the key reaches more programs than this one; compromise is a multi-protocol event, not a single-program one"
+          },
+          {
+            "action": "check whether this authority signed upgrades for the same programs in the previous epoch (habit vs anomaly)",
+            "requestedRpcCalls": 17,
+            "outcomeIfPositive": "the cadence is habitual, which weakens the anomaly claim and strengthens the routine one"
+          }
+        ],
+        "falsifier": "if the widened sample shows this authority signing upgrades for this program and no other program's ProgramData in the window, the blast radius is one program — the multi-protocol reading is denied",
+        "derivedFrom": {
+          "posture": "eoa",
+          "authority_rotated": false,
+          "bytecode_confidence": "absent",
+          "entrypoints_added": 0,
+          "entrypoints_removed": 0,
+          "undeclared_entrypoints": 0,
+          "direct_dependents": 0,
+          "co_controlled": 0,
+          "wanted_signatures": 25,
+          "affordable_signatures": 8
+        }
+      }
+    },
+    "llmTokensUsed": 0
+  },
+  "blastRadius": {
+    "directCallers": 0,
+    "transitiveCallers": 0,
+    "edges": 3,
+    "cpiOccurrences": 21,
+    "failedCpiOccurrences": 20,
+    "lamportsRouted": 63723520,
+    "lamportsMovedDeduped": 63723520,
+    "mintsTouched": 0,
+    "tracesAnalyzed": 8,
+    "tracesFailed": 5,
+    "attributionQuality": "logs",
+    "historySpanDays": 5.9958680555555555,
+    "topDependents": [],
+    "transitiveByDepth": []
+  },
+  "graph": {
+    "target": "FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf",
+    "nodes": [
+      "BPFLoaderUpgradeab1e11111111111111111111111",
+      "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "11111111111111111111111111111111",
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+    ],
+    "edges": [
+      {
+        "from": "BPFLoaderUpgradeab1e11111111111111111111111",
+        "to": "11111111111111111111111111111111",
+        "count": 1,
+        "lamportsRouted": 63723520
+      },
+      {
+        "from": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "to": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+        "count": 15,
+        "lamportsRouted": 0
+      },
+      {
+        "from": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "to": "11111111111111111111111111111111",
+        "count": 5,
+        "lamportsRouted": 0
+      }
+    ],
+    "detailedEdges": [
+      {
+        "from": "BPFLoaderUpgradeab1e11111111111111111111111",
+        "to": "11111111111111111111111111111111",
+        "count": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "transactions": 1,
+        "lamportsRouted": 63723520,
+        "tokenMintsTouched": [],
+        "selectors": [],
+        "flattenedAttributions": 0,
+        "firstSeenSlot": 459717200,
+        "lastSeenSlot": 459717200,
+        "lastBlockTime": 1792604475,
+        "supplyChain": false
+      },
+      {
+        "from": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "to": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+        "count": 15,
+        "succeeded": 0,
+        "failed": 15,
+        "transactions": 5,
+        "lamportsRouted": 0,
+        "tokenMintsTouched": [],
+        "selectors": [],
+        "flattenedAttributions": 0,
+        "firstSeenSlot": 457327417,
+        "lastSeenSlot": 457327442,
+        "lastBlockTime": 1792086720,
+        "supplyChain": false
+      },
+      {
+        "from": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "to": "11111111111111111111111111111111",
+        "count": 5,
+        "succeeded": 0,
+        "failed": 5,
+        "transactions": 5,
+        "lamportsRouted": 0,
+        "tokenMintsTouched": [],
+        "selectors": [],
+        "flattenedAttributions": 0,
+        "firstSeenSlot": 457327417,
+        "lastSeenSlot": 457327442,
+        "lastBlockTime": 1792086720,
+        "supplyChain": false
+      }
+    ],
+    "nodeMeta": [
+      {
+        "id": "BPFLoaderUpgradeab1e11111111111111111111111",
+        "inbound": 0,
+        "outbound": 1,
+        "noise": false,
+        "selfCpi": false
+      },
+      {
+        "id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+        "inbound": 15,
+        "outbound": 0,
+        "noise": true,
+        "selfCpi": false
+      },
+      {
+        "id": "11111111111111111111111111111111",
+        "inbound": 6,
+        "outbound": 0,
+        "noise": true,
+        "selfCpi": false
+      },
+      {
+        "id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "inbound": 0,
+        "outbound": 20,
+        "noise": true,
+        "selfCpi": false
+      }
+    ],
+    "tracesAnalyzed": 8,
+    "tracesFailed": 5,
+    "lamportsMovedDeduped": 63723520,
+    "attributionQuality": "logs",
+    "flattenedFrames": 0,
+    "anomalies": []
+  },
+  "evidence": [
+    {
+      "id": "EV-1",
+      "kind": "limit",
+      "summary": "endpoint corroboration slot_mismatch: endpoints answered at different slots (459721682, 459721683); different bytes there is chain progress, not a contradiction, so the comparison is inconclusive"
+    },
+    {
+      "id": "EV-2",
+      "kind": "posture",
+      "summary": "authority=w3mDDNmTLnp9FUfjdPrGZt7GyTBWzjyF5wGvzdQGDaD posture=eoa bytecode=432384B at offset 45 discriminant=3 layout=u64+option33 sha256=570e4cd4703aad60…",
+      "ref": {
+        "program": "FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf"
+      }
+    },
+    {
+      "id": "EV-3",
+      "kind": "trace",
+      "summary": "ingestion plan: 8 relevant tx(s) across 8 block(s), density 1.00 tx/block. per_signature: 8 call(s), ~52.0 kB. per_block: 8 call(s), ~104.0 MB (amplification 2000.0x, because a block carries every transaction in the slot, not yours). Calls 1.0x cheaper, bytes 2000.0x dearer. Chose per_signature because density 1.00 < floor 4. Cost model: defaults_unverified: run `dot calibrate --rpc <url>` to measure these.",
+      "ref": {
+        "program": "FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf"
+      }
+    },
+    {
+      "id": "EV-4",
+      "kind": "trace",
+      "summary": "trace 1: slot=459718519 version=0 outer=3 innerGroups=0 attribution=logs keys=static_only",
+      "ref": {
+        "signature": "LzWwYhVtANxTiBi4p6AVNRqoW7tVTxgJuYYAHyiYr9KeVnpCZjB9XdwYmzb9zNGSBtL2KEunv6SdhjJFEYhsT7E",
+        "slot": 459718519
+      }
+    },
+    {
+      "id": "EV-5",
+      "kind": "limit",
+      "summary": "widen skipped: 8 trace(s) parsed at 32% coverage — an empty dependent set here is a coverage gap, not a finding",
+      "ref": {
+        "program": "FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf"
+      }
+    },
+    {
+      "id": "EV-6",
+      "kind": "limit",
+      "summary": "widen declined: no budget left to sample the authority history",
+      "ref": {
+        "program": "FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf"
+      }
+    },
+    {
+      "id": "EV-7",
+      "kind": "limit",
+      "summary": "chain_verified=false — every check had two sources, but programdata_bytes, transaction_roundtrip, signature_finality could not be compared — absence of a contradiction is not agreement (programdata_bytes:inconclusive/corroborated, program_pointer:agree/corroborated, transaction_roundtrip:inconclusive/corroborated, signature_finality:inconclusive/corroborated)",
+      "ref": {
+        "program": "FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf"
+      }
+    },
+    {
+      "id": "EV-8",
+      "kind": "limit",
+      "summary": "hypothesis [authority_risk]: the exposure here is the key, not the code: one signature can replace the program — falsifier: if the widened sample shows this authority signing upgrades for this program and no other program's ProgramData in the window, the blast radius is one program — the multi-protocol reading is denied",
+      "ref": {
+        "program": "FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf"
+      }
+    }
+  ],
+  "integrity": {
+    "agreement": "slot_mismatch",
+    "reason": "endpoints answered at different slots (459721682, 459721683); different bytes there is chain progress, not a contradiction, so the comparison is inconclusive",
+    "endpoints": [
+      {
+        "url": "https://api.mainnet-beta.solana.com/",
+        "ok": true,
+        "slot": 459721682
+      },
+      {
+        "url": "https://solana-rpc.publicnode.com/",
+        "ok": true,
+        "slot": 459721683
+      }
+    ]
+  },
+  "ingest": {
+    "strategy": "per_signature",
+    "rationale": "8 relevant tx(s) across 8 block(s), density 1.00 tx/block. per_signature: 8 call(s), ~52.0 kB. per_block: 8 call(s), ~104.0 MB (amplification 2000.0x, because a block carries every transaction in the slot, not yours). Calls 1.0x cheaper, bytes 2000.0x dearer. Chose per_signature because density 1.00 < floor 4. Cost model: defaults_unverified: run `dot calibrate --rpc <url>` to measure these.",
+    "groups": 8,
+    "est": {
+      "callsPerSignature": 8,
+      "callsPerBlock": 8,
+      "bytesPerSignature": 52000,
+      "bytesPerBlock": 104000000
+    },
+    "callSavingRatio": 1,
+    "byteAmplification": 2000
+  },
+  "limits": [
+    {
+      "code": "NO_IDL_CONTRACT",
+      "title": "No IDL, no semantic claim",
+      "blind": "There is no mandatory on-chain IDL. Anchor programs may or may not publish one, the legacy `anchor:idl` PDA is version- and size-dependent, and non-Anchor programs frequently ship a binary with no interface at all. In `mode: real` the model then has nothing to read, and Dot must say so instead of paraphrasing a bytecode diff.",
+      "mitigation": "`--idl <path|url>` to supply a published IDL and a prior version for a real diff. Without it, `narrative.refused = \"idl_unavailable\"` appears in the report and the tier rests only on posture plus observed graph.",
+      "always": true
+    },
+    {
+      "code": "HISTORY_RETENTION",
+      "title": "Historical transactions are whatever the node kept",
+      "blind": "getTransaction returns null outside the node’s retention window. Public mainnet endpoints commonly retain on the order of days, not the chain’s full life, and the window is a BigTable/leader configuration Dot cannot read. A program whose integrators were busy in 2024 can show a small graph today because the 2024 traces are gone, not because nobody called it.",
+      "mitigation": "Run Dot continuously so the graph is built while the traces are still hot and persisted in Dot’s own store. For backfill, use a provider archive node, or `getBlock`/`getBlocks` streaming into your own indexer, or Yellowstone gRPC `subscribe` on transaction notifications, which is a live feed rather than a historical read.",
+      "always": true
+    },
+    {
+      "code": "NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION",
+      "title": "Core JSON-RPC has no \"every bytecode change\" feed",
+      "blind": "There is no `getProgramChanges` and `subscribe*` is per-account. Watching the whole upgradeable loader means polling `getProgramAccounts` on a program that owns >100k accounts, which providers gate, rate-limit or reject outright.",
+      "mitigation": "Dot ships both layers: `watch --targets` polls a named list over JSON-RPC, and `watch --yellowstone <url>` subscribes by owner over Geyser and sees every `ProgramData` write on the cluster. The gRPC feed costs zero JSON-RPC calls, which is what makes chain-wide detection budget-feasible at all.",
+      "always": true
+    },
+    {
+      "code": "CPI_DEPTH_ATTRIBUTION",
+      "title": "innerInstructions is flat; depth is inferred, never given as a tree",
+      "blind": "`meta.innerInstructions[i]` maps a group of CPI instructions onto one outer instruction index, and the list inside the group has no parent pointers. At CPI depth >= 3 the caller of a nested call is not recoverable from the group alone. Measured on mainnet, instructions do carry `stackHeight` and `meta.logMessages` carries `Program <id> invoke [N]`, and Dot uses both — but `stackHeight` is absent from `@solana/web3.js` v1 type declarations and is not guaranteed by every node, and the log collector truncates.",
+      "mitigation": "Dot reports `attributionQuality`: `stackHeight` (exact), `logs` (exact, truncation-bounded) or `flat` (upper bound only, nested callers credited to the top-level program). For guaranteed depth-agnostic capture, parse a Yellowstone gRPC transaction stream, or record with an instrumented validator, since neither depends on the RPC’s log caps.",
+      "always": true
+    },
+    {
+      "code": "VALUE_IS_PROXY",
+      "title": "Value routed is an upper-bound proxy, per transaction, not per edge",
+      "blind": "Lamports move between accounts; nothing in the response says \"this transfer belongs to this CPI leg\". Dot sums positive balance deltas over the accounts a call touched, and takes token deltas from pre/postTokenBalances, which are per-transaction arrays. A swap through a router that touches six accounts is counted once on the receiving side, and cannot be split into legs.",
+      "mitigation": "Treat it as a ranking signal. For a settlement-grade number you need an account-level state diff per instruction, which means an instrumented node or an indexer that stores instruction-level balance changes.",
+      "always": true
+    },
+    {
+      "code": "PDA_HOLDINGS_NOT_ENUMERATED",
+      "title": "Program-held vaults are only enumerable with a declared seed list",
+      "blind": "TVL sitting in a program’s PDAs is not visible from the transaction sample, and the seeds that derive those PDAs live in the deployment repo. Dot can only read custody for seed patterns an operator has declared; for everyone else the figure stays unknown, and unknown is printed as unknown. Typed seeds matter too: the encoding `u8:0` is the byte 0x00, and hashing the ASCII character for zero instead derives a different address that resolves to nothing.",
+      "mitigation": "`--seeds seeds.example.json` derives each PDA, reads them in `getMultipleAccounts` chunks of up to 100, and sums lamports plus raw token units per mint. It reports unresolved seed variables, absent accounts and an incomplete sweep separately — see `renderHoldings`, which refuses to print a USD figure and states that absence is not zero holdings.",
+      "always": true
+    },
+    {
+      "code": "SIGNATURE_INDEX_IS_KEY_BASED",
+      "title": "getSignaturesForAddress matches keys, not roles",
+      "blind": "The index returns any transaction where the address appears as an account key: as the invoked program, as a CPI target, as a mint, as a PDA, as a token account. For an id that is also a commonly-referenced account, the sample fills up with transactions that have nothing to do with the program’s execution.",
+      "mitigation": "Filter on \"appears as a program id in an instruction\" during normalization, which Dot does by dropping frames whose program never actually ran. Sample size and `sampleCoverage` are reported so a reader can see how much of the window was noise.",
+      "always": true
+    },
+    {
+      "code": "PRE_DEPLOY_PARTIAL",
+      "title": "Dot sees that an image is staged; it does not see what the image does",
+      "blind": "Narrowed, not closed. The loader’s staging `Buffer` account is visible to the Geyser owner filter, so `dot watch --yellowstone` now emits `STAGED_UPGRADE` with the image hash, size and staging authority, and `STAGED-NOOP` when the bytes already match what is live. What remains unseen: without a published IDL pair there is no semantic reading of the staged image, no source, no repository, and no CI signal. A `Buffer` account also **names no program** — `upgrade` receives the program as a transaction argument — so attribution is deferred until the bytes land, and Dot marks it `UNATTRIBUTED` rather than guessing. There is likewise no protocol-level timelock to read: the loader applies new bytecode on the upgrade transaction itself, so `finalizeEta` reports `immediate_unless_governed` unless the operator declares a delay via `--timelock-ms`. An invented ETA would be the most dangerous number in this tool, because it is the one an operator would schedule against.",
+      "mitigation": "Supply `--idl`/`--prior-idl` so `mode: real` can read the delta; pair the staged signal with a static analyzer on the staged bytes. Run Dot long enough for bytecode-hash landing to attribute earlier stages, and record `pending()` to see how many images are still unattributed.",
+      "always": true
+    },
+    {
+      "code": "FINALITY_VS_LATENCY",
+      "title": "Finalized-only means slow-only",
+      "blind": "Dot reads at `finalized` because a graph built on `processed` data can be reorged out from under it. That costs minutes of detection latency, which matters if the upgrade you are watching is being exploited right now.",
+      "mitigation": "`--commitment confirmed` trades reorg risk for latency. Do not use `processed` for a persisted graph.",
+      "always": true
+    },
+    {
+      "code": "SINGLE_NODE_TRUST",
+      "title": "One RPC node is one point of failure and one point of view",
+      "blind": "A provider can cache, filter, lag, or serve you a node that is behind. Every number in a Dot report is a statement about what one endpoint chose to return. A quiet blast radius can mean a filtered node.",
+      "mitigation": "`--secondary-rpc <url>` reads the `ProgramData` account from both endpoints and halts on a same-slot contradiction; each endpoint gets its own `Budget` so a retry on one cannot silently spend the other’s. `rpc.rpcErrorCodes` and `pruned` remain the first places to look.",
+      "always": true
+    },
+    {
+      "code": "NO_MALICE_DETECTION",
+      "title": "Dot ranks attention; it does not adjudicate guilt",
+      "blind": "Nothing here determines whether an upgrade is malicious. A P0 says \"posture and blast radius justify a human before the weekend\", and a P3 says \"the evidence Dot could gather does not\". Absence of a finding is not a clean bill of health, and the tier is a queue position, not a verdict.",
+      "mitigation": "Read the `components` array and the evidence ledger before escalating to anyone. If `cappedBy` is non-null, the tier is capped by a blind spot and the next step is a better data source, not a louder alarm.",
+      "always": true
+    }
+  ],
+  "budget": {
+    "limits": {
+      "maxRpcCalls": 60,
+      "maxLlmTokens": 20000,
+      "maxWallMs": 240000,
+      "maxSignatures": 8
+    },
+    "spent": {
+      "rpcCalls": 18,
+      "llmTokensSettled": 0,
+      "llmTokensReserved": 0,
+      "signatures": 8
+    },
+    "remaining": {
+      "rpcCalls": 42,
+      "llmTokens": 20000,
+      "signatures": 0,
+      "wallMs": 208495
+    },
+    "elapsedMs": 31505
+  },
+  "rpc": {
+    "calls": 18,
+    "retries": 1,
+    "pruned": 0,
+    "failed": 0,
+    "bytes": 576797,
+    "bytesEstimated": true,
+    "byMethod": {
+      "getAccountInfo": 3,
+      "getSignaturesForAddress": 1,
+      "getTransaction": 13,
+      "getSignatureStatuses": 1
+    },
+    "rpcErrorCodes": {}
+  },
+  "wallMs": 31505
+}

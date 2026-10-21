@@ -14,6 +14,7 @@ import type { BlockBatcher, IngestSummary } from '../graph/batcher.js';
 import { classifyAuthority, deriveProgramData, decodeProgramData } from '../state/programdata.js';
 import { BudgetExhaustedError, DotError, describeError, isDotError } from '../errors.js';
 import { buildHypothesis, judgeHypothesis, type Hypothesis, type ReTestObservation } from './hypothesis.js';
+import { CANNOT_PROVE, type ChainVerification } from '../rpc/verifier.js';
 import { scoreRisk, type ExposureSignals, type EvidenceSignals } from '../score/risk.js';
 import type { UpgradeEvent, WatchTarget } from '../watcher/watcher.js';
 
@@ -50,6 +51,8 @@ export type ActResult = {
    * measures co-occurrence, which is the honest relation for co-control.
    */
   coInvokedPrograms: string[];
+  /** The signatures this run actually got a transaction for, newest first. Verification samples from here. */
+  signatures: string[];
 };
 
 /**
@@ -113,6 +116,13 @@ export type ScoutOptions = {
   recordBytecode?: (args: { program: string; programData: string; bytes: Buffer; slot: number | null }) => Promise<void>;
   /** Multi-endpoint corroboration for the read that decides whether an upgrade happened. */
   resilient?: { quorum: (address: string) => Promise<import('../rpc/resilient.js').QuorumRead> };
+  /**
+   * `--verify`: ask the second endpoint about the accounts and transactions the report is
+   * built from. Injected as a function so the Scout stays out of transport construction,
+   * and called only after `act` — there is nothing worth corroborating before a sample
+   * exists, and the calls it would cost would be spent on a run that may still stop.
+   */
+  verify?: (args: { program: string; programData: string; signatures: string[] }) => Promise<import('../rpc/verifier.js').ChainVerification>;
   knownMultisigs?: string[];
   /** Max transitive depth reported; deep graphs are mostly re-exports of the same DEX. */
   maxDepth?: number;
@@ -148,6 +158,7 @@ export class Scout {
   private widenRan = false;
   private widenNote: string | null = null;
   private hypothesis: Hypothesis | null = null;
+  private chainVerified: ChainVerification | null = null;
   private wantedSignatures: number | null = null;
 
   constructor(opts: ScoutOptions) {
@@ -275,6 +286,34 @@ export class Scout {
 
     // Now the ask, stated as a claim this run could not settle — see the note above
     // `act` for why it is built here rather than inside Decide.
+    if (this.o.verify) {
+      try {
+        this.chainVerified = await this.o.verify({ program: ctx.program, programData: ctx.programData, signatures: built.signatures });
+      } catch (e) {
+        if (!(e instanceof BudgetExhaustedError)) throw e;
+        this.chainVerified = {
+          verified: false,
+          reason: 'verification aborted: the budget ran out mid-cross-check, so the checks below are partial by construction',
+          endpoints: [],
+          slot: null,
+          checks: [],
+          sampledSignatures: 0,
+          cannotProve: CANNOT_PROVE,
+        };
+      }
+      const cv = this.chainVerified;
+      this.ledger.add({
+        kind: cv.verified ? 'trace' : 'limit',
+        summary: `chain_verified=${cv.verified} — ${
+          cv.verified
+            ? `${cv.checks.length} check(s) corroborated by ${cv.endpoints.length} endpoints at slot ${cv.slot}, ${cv.sampledSignatures} signature(s) cross-checked. Corroboration, not an inclusion proof.`
+            : `${cv.reason} (${cv.checks.map((x) => `${x.name}:${x.verdict}/${x.coverage}`).join(', ') || 'no check ran'})`
+        }`,
+        ref: { program: ctx.program },
+      });
+      this.mark('verify', cv.verified ? `true at slot ${cv.slot}, ${cv.sampledSignatures} signature(s) cross-checked` : `false: ${cv.reason}`);
+    }
+
     if (decision.escalation?.kind === 'needs_more_budget') {
       const h = buildHypothesis({
         ctx,
@@ -535,6 +574,7 @@ export class Scout {
 
     const builder = new GraphBuilder(program);
     const coInvoked = new Set<string>();
+    const fetched: string[] = [];
     let found = 0;
     let pruned = 0;
     let errors = 0;
@@ -609,6 +649,7 @@ export class Scout {
         const analysis = analyzeTrace(tx, resolution);
         builder.addTrace(sig.signature, tx, analysis);
         found++;
+        fetched.push(sig.signature);
         if (tx.blockTime !== null && tx.blockTime !== undefined) {
           oldestBlockTime = oldestBlockTime === null ? tx.blockTime : Math.min(oldestBlockTime, tx.blockTime);
           newestBlockTime = newestBlockTime === null ? tx.blockTime : Math.max(newestBlockTime, tx.blockTime);
@@ -659,6 +700,7 @@ export class Scout {
       ingest,
       source,
       coInvokedPrograms: [...coInvoked],
+      signatures: fetched,
       wantedSignatures: decision.plan.wantedSignatures,
     };
   }
@@ -763,6 +805,7 @@ export class Scout {
       ],
       cappedBy: 'halted: two endpoints contradict each other about the same account at the same slot',
       stoppedAt: 'perceive',
+      stages: this.trace,
       stopNote: 'endpoint disagreement',
       decision: null,
       blastRadius: null,
@@ -815,7 +858,9 @@ export class Scout {
       cappedBy: built?.risk.cappedBy ?? stopNote,
       stoppedAt,
       stopNote,
+      stages: this.trace,
       ...(this.hypothesis ? { hypothesis: this.hypothesis } : {}),
+      ...(this.chainVerified ? { chainVerified: this.chainVerified } : {}),
       ...(this.coControlled.length > 0 || this.widenNote
         ? { coControlledPrograms: this.coControlled, widenNote: this.widenNote }
         : {}),

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { Command } from 'commander';
 import { Budget, type BudgetLimits } from '../agent/budget.js';
 import { EvidenceLedger } from '../agent/evidence.js';
@@ -19,6 +19,7 @@ import type { ObservedState as ObservedStateLike } from '../watcher/watcher.js';
 import { YellowstoneUpgradeFeed } from '../rpc/yellowstone.js';
 import { StagedUpgradeDetector } from '../state/preDeploy.js';
 import { ResilientClient } from '../rpc/resilient.js';
+import { ChainVerifier } from '../rpc/verifier.js';
 import { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
 import { BytecodeVault } from '../state/bytecodeVault.js';
 import { diffBytecode, renderBytecodeDiff, discriminatorsFromIdl } from '../state/bytecodeDiff.js';
@@ -95,7 +96,9 @@ function parseBudget(o: GlobalOpts): Budget {
   });
 }
 
-type BuildExtras = Partial<Pick<import('../agent/scout.js').ScoutOptions, 'bytecode' | 'recordBytecode' | 'carryHypothesis'>>;
+type BuildExtras = Partial<
+  Pick<import('../agent/scout.js').ScoutOptions, 'bytecode' | 'recordBytecode' | 'carryHypothesis'> & { verify: boolean; verifySample: string }
+>;
 
 async function readIdlPair(now?: string, prior?: string): Promise<{ now: unknown | null; prior: unknown | null }> {
   const load = async (p?: string) => {
@@ -150,6 +153,9 @@ async function build(o: GlobalOpts & BuildExtras) {
   const quorum = new ResilientClient(endpoints);
   const model = await loadCostModel(o.costModel);
   const batcher = o.ingest === 'signatures' ? undefined : new BlockBatcher(client, model, budget);
+  // Built even with one endpoint: the honest answer to "verify this" without a second
+  // source is a refusal that says why, not a silently skipped check.
+  const verifier = o.verify ? new ChainVerifier(endpoints, budget, { sample: Number(o.verifySample ?? 3) }) : null;
 
   const scout = new Scout({
     client,
@@ -161,6 +167,7 @@ async function build(o: GlobalOpts & BuildExtras) {
     ...(o.bytecode ? { bytecode: o.bytecode } : {}),
     ...(o.recordBytecode ? { recordBytecode: o.recordBytecode } : {}),
     ...(o.carryHypothesis ? { carryHypothesis: o.carryHypothesis } : {}),
+    ...(verifier ? { verify: (a: { program: string; programData: string; signatures: string[] }) => verifier.verify(a) } : {}),
     idlResolver: (p) => resolveIdl(p, { idl: o.idl, priorIdl: o.priorIdl, tryOnchain: o.tryOnchainIdl }, client),
     ...(o.secondaryRpc ? { resilient: { quorum: (a: string) => quorum.getAccountInfoQuorum(a) } } : {}),
     ...(batcher ? { batcher, ingest: o.ingest as 'auto' | 'blocks' | 'signatures' } : {}),
@@ -199,10 +206,12 @@ program
   .option('--prior-bytecode <file>', 'explicit prior image, when the vault has none')
   .option('--hypothesis-file <file>', 'a hypothesis JSON from an earlier under-budgeted run; it gets re-tested this time')
   .option('--hypothesis-out <file>', 'write the escalation hypothesis here for a later run to test')
+  .option('--verify', 'cross-check the accounts and sampled transactions against every configured endpoint; costs ~4 + 2x(3+sample) calls')
+  .option('--verify-sample <n>', 'how many of the sampled signatures to cross-check', '3')
   .option('--label <label>', 'human name for reports')
   .option('--format <fmt>', 'json | md | both', 'both')
   .option('--out <dir>', 'write report files into this directory instead of stdout')
-  .action(async (programId: string, opts: GlobalOpts & { label?: string; forceFullTrace?: boolean; seeds?: string; priorBytecode?: string; hypothesisFile?: string; hypothesisOut?: string }) => {
+  .action(async (programId: string, opts: GlobalOpts & { label?: string; forceFullTrace?: boolean; seeds?: string; priorBytecode?: string; hypothesisFile?: string; hypothesisOut?: string; verify?: boolean; verifySample?: string }) => {
     if (!isWellFormedPubkey(programId)) {
       process.stderr.write(`error: ${programId} is not a 32-byte base58 address\n`);
       process.exitCode = 2;
@@ -779,6 +788,7 @@ program
     const md = renderBlastRadius(result);
     if (opts.format === 'json') process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else if (opts.out) {
+      await mkdir(opts.out, { recursive: true });
       const base = `${opts.out}/blast-radius-${new Date().toISOString().slice(0, 10)}`;
       await writeFile(`${base}.json`, JSON.stringify(result, null, 2));
       await writeFile(`${base}.md`, md);
@@ -852,6 +862,9 @@ async function emit(report: DotReport, opts: { format: string; out?: string }): 
   const wantJson = opts.format === 'json' || opts.format === 'both';
   const wantMd = opts.format === 'md' || opts.format === 'both';
   if (opts.out) {
+    // Create the directory: a run that spends its whole RPC budget and then dies on
+    // ENOENT has taken the answer with it, and the user cannot get it back for free.
+    await mkdir(opts.out, { recursive: true });
     const base = `${opts.out}/${report.program.slice(0, 8)}-${report.generatedAt.replace(/[:.]/g, '-')}`;
     if (wantJson) await writeFile(`${base}.json`, JSON.stringify(report, null, 2));
     if (wantMd) await writeFile(`${base}.md`, renderMarkdown(report));
