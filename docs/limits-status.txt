@@ -1,4 +1,4 @@
-Limit status — 5 RESOLVED, 7 NARROWED, 8 UNRESOLVABLE_IN_CODE (20 codes)
+Limit status — 5 RESOLVED, 8 NARROWED, 7 UNRESOLVABLE_IN_CODE (20 codes)
 
 ## RESOLVED
 NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION
@@ -68,6 +68,12 @@ PROGRAMDATA_REVERSE_LOOKUP
   remains: A fresh daemon with no pointer history and a provider that gates getProgramAccounts can still see an upgrade it cannot name. Those events are counted in `unresolved`, never guessed at.
   tests:   test/transports.test.ts
 
+PDA_HOLDINGS_NOT_ENUMERATED
+  narrowed: Routed value is still labelled as routed, never as custody. Additionally `--seeds` now derives PDAs from an operator-declared seed list, reads them in getMultipleAccounts chunks of up to 100, and sums lamports and raw token units per mint, with typed seed encodings (u8:1 vs the character "1") handled explicitly.
+  remains: Only declared patterns are read. The seeds live in the deployment repo and a publisher who does not share them has, by construction, no observable custody — `unresolvedSeeds`, `accountsEmpty` and `complete:false` are reported so an absent figure is never shown as a zero one. No USD value is printed: there is no price oracle.
+  fix:     Publish the seed patterns in the deployment repo, or use an indexer/DAS API for programs that will not.
+  tests:   test/seeds.test.ts
+
 ## UNRESOLVABLE_IN_CODE
 HISTORY_RETENTION
   not a code problem: Dot cannot fix this and does not pretend to. Retention is a BigTable/provider decision; the only thing code can do is classify `-32015` as missing history instead of as a fetch error, and cap the tier on it.
@@ -109,10 +115,4 @@ NO_MALICE_DETECTION
   not a code problem: A tier is printed as a queue position with its components exposed, and every report ends with a sentence saying a low tier is a statement about evidence.
   remains: Deciding whether an upgrade is hostile requires intent: repository, governance discussion, who signed. Dot ranks attention; it never adjudicates.
   tests:   test/risk.test.ts
-
-PDA_HOLDINGS_NOT_ENUMERATED
-  not a code problem: Routed value is labelled as routed, never as custody, so a small graph cannot be misread as a small stake.
-  remains: No RPC lists all token accounts owned by a program’s PDAs, and the seeds live in source the publisher need not share. A seed list is external configuration; with it Dot could sum holdings, without it the number is unknown rather than zero.
-  fix:     Supply PDA seeds from the deployment repo, or use an indexer/DAS API. See docs/blocked.md for why the --seeds path is not in this build.
-  tests:   (none — this state does not claim a fix)
 RESOLVED claims verified against existing test files: yes

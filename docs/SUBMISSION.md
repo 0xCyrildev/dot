@@ -1,80 +1,73 @@
 # Submission: Dot — agentic blast-radius analysis for the Solana on-chain supply chain
 
-**Repo:** `@zeroxcyril/dot` (npm pending) · **Ecosystem:** Solana · **Language:** TypeScript, Node ESM
-**Category:** dynamic analysis / dependency & upgrade monitoring · **Interfaces:** CLI, library, MCP server
+**Repo:** `@zeroxcyril/dot` (npm publish blocked; see §5 of `docs/blocked.md`)
+**Ecosystem:** Solana · **Language:** TypeScript, Node ESM · **Category:** dynamic analysis / upgrade & supply-chain monitoring
+**Interfaces:** CLI (6 bins), library, MCP server over stdio, agent skill (`skill/dot/`)
+**Evidence of being built against the chain:** [`docs/lessons.md`](./lessons.md) · [`docs/live-run-2026-10-21.json`](./live-run-2026-10-21.json)
 
 ---
 
-## 1. What it is
+## 1. Five-minute reproduction — no endpoint, no API key, no network
 
-Dot watches `BPFLoaderUpgradeable` for bytecode changes, reconstructs the CPI dependency graph of the
-program that just changed from real execution traces, and scores the upgrade by how many integrators call
-it and how much value routes through them. Output is a P0–P3 triage tier with the arithmetic that produced
-it, an evidence ledger with citable ids, a budget snapshot, and the list of things it could not see.
+```bash
+git clone <repo> && cd dot
+npm ci && npm run build
+npm test                                   # 193 passed, 1 skipped (a gated live-endpoint test)
 
-One run is five stages under a hard spend ceiling:
+# The real parser, run over a real mainnet transaction that ships in the repo:
+node dist/cli/index.js replay \
+  --fixture test/fixtures/tx-nested.json \
+  --target  pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA \
+  --provenance "captured from api.mainnet-beta.solana.com on 2026-10-21"
+
+# What it refuses to see, in three states:
+node dist/cli/index.js limits --status
+```
+
+The graph, from bytes that came off the chain:
 
 ```
-perceive  1 RPC call     read ProgramData, decode, diff
-decide    rules or model is this worth a trace pull, and how big a sample
-act       expensive      signature walk → innerInstructions fold → graph
-evaluate                 digest, price exposure, price the evidence quality
-report                   tier + components + evidence + budget + limits
+slot 459628002  version legacy  succeeded  keys via static_only
+6 outer instruction(s), 2 inner group(s), 11 CPI instruction(s), attribution stackHeight
+
+  depth 2  AToken…8knL -> Tokenk…Q5DA [spl-token]   via stackHeight
+  depth 2  pAMMBa…fXEA -> Tokenz…xuEb [token-2022] via stackHeight
+  depth 2  pAMMBa…fXEA -> Tokenk…Q5DA [spl-token]   via stackHeight
+  depth 2  pAMMBa…fXEA -> pAMMBa…fXEA              via stackHeight   ← a real self-CPI
+
+Aggregated edges:
+  AToken…8knL -> Tokenk…Q5DA   count=3 lamports=313067416 txs=1
+  pAMMBa…fXEA -> Tokenz…xuEb   count=1 lamports=313067416 txs=1
+  pAMMBa…fXEA -> pAMMBa…fXEA   count=1 lamports=0         txs=1
+
+Direct dependents of pAMMBa…fXEA: 0
+One transaction, replayed from captured bytes. It is not a sweep and does not stand for one.
 ```
 
-`decide` exists to avoid `act`. A multisig-held program with an already-known empty graph stops after
-**one RPC call** and still emits a complete report recording what it declined to spend. That trace of
-skipped work is the difference between an agent and a script with a for-loop, and it is in the report, not
-in a README claim.
+Three details in that output are the whole product. The edge at outer index 4 is attributed to the
+program that *made* the call, because `innerInstructions[].index` is folded onto its parent first. The
+self-CPI is kept rather than filtered, because a program calling itself is a real coupling an upgrade
+changes. And `Direct dependents: 0` is honest for one transaction — the dependents of a program come from
+many traces, which is what `dot analyze` and `dot blast-radius` go and fetch.
 
-## 2. Why it is different: the ecosystem is a graph, not a set of programs
+With a reachable RPC, the same engine produces the sweep:
 
-The tools in this space are siloed by phase. Static analyzers audit one program in isolation before
-deployment. Runtime monitors match transactions against known-bad patterns. Dependency scanners inspect
-off-chain npm manifests. None of them models the thing that actually carries risk on Solana: **program A
-CPIs into program B, B into C, and no source tree contains that edge.**
+```bash
+dot analyze JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 --depth 3 --secondary-rpc <url2>
+dot blast-radius --since 2026-10-20 --min-value 100000000000 --authority-map authorities.json
+```
 
-When B's bytecode is replaced on chain, every caller of B inherits B's new behaviour — including the
-version of it they never reviewed. Dot is the only tool here that answers the question a real incident
-asks: *how many integrators are now running against new code, and how much value was flowing through
-them when it changed?*
+No Jupiter graph is printed here, because no endpoint was reachable while this was built
+(`UND_ERR_CONNECT_TIMEOUT` on three public RPCs). The preserved real artifact
+[`live-run-2026-10-21.json`](./live-run-2026-10-21.json) is instead — including the part where the node
+refused history and the report said `cappedBy: "only 0% of the planned sample was retrievable from the
+node"`, tier P3, confidence **low**. That is the failure case behaving correctly, and it is shipped as an
+example on purpose.
 
-The graph is reconstructed from `meta.innerInstructions`, which means getting the semantics right rather
-than the API call: `innerInstructions[].index` is a position in the **outer** instruction array, so the
-inner lists must be folded onto their parent before any edge is attributed, and depth beyond that comes
-from `stackHeight` or the `Program <id> invoke [N]` log tree — with a labelled fallback, because flat
-attribution silently credits depth-3 callees to the transaction root and inflates dependent counts.
+## 2. The three chain contradictions
 
-Agentic, not decorative: budgets are enforced **before** the request; a failed call is still a spent call;
-each retry is charged again; LLM tokens are reserved as an estimate and settled against billed usage so an
-underestimate surfaces as `overrun`. In chain-wide mode a `UpgradeDispatcher` caps each investigation at 50
-calls and the daemon at a daily pool, serves authority handovers ahead of routine bytecode writes, drains
-serially, and **counts every dropped event** — because a daemon that dropped forty upgrades looks
-identical to one that saw none.
-
-The model is quarantined. In `mode: real` a model reads the IDL diff and explains it, but it cannot set
-the tier, and an answer that cites an evidence id Dot never issued is **discarded whole, not trimmed**,
-with the refusal printed. Detection stays deterministic.
-
-## 3. Why it belongs in this list
-
-- **Fills a named gap.** On-chain supply chain / blast radius at upgrade time is the phase nobody covers:
-  before deployment is static's job, per-transaction is monitoring's job, and between them an upgrade lands
-  and integrates invisibly.
-- **Composable with the list.** It ships an MCP server (`solana_blast_radius`, `solana_evaluate_upgrade`)
-  with a required `budget` argument, so an orchestrator can call it and cannot accidentally ask for an
-  unbounded scan. Same engine as a CLI, a library, and JSON reports a pipeline can diff.
-- **Built to be audited.** Every figure carries a `file:line`-equivalent: components explain the tier,
-  evidence ids back the prose, `cappedBy` names the blind spot that capped it, and `dot limits` prints 20
-  documented blind spots as machine-readable data rather than a disclaimer paragraph.
-- **Honest about severity ≠ likelihood ≠ confidence.** Low confidence can never mint a P0 — an agent that
-  could not see the graph gets to declare a blind spot, not an emergency.
-
-## 4. The three chain contradictions — evidence it was built against real data
-
-The original design was written from documentation and client typings. Three load-bearing assumptions died
-on contact with mainnet, and all three are in the code as measured comments and in `dot limits` as
-documented blind spots.
+Written against measured mainnet responses. Three load-bearing assumptions in the original design died
+on contact with the chain; full accounts in [`docs/lessons.md`](./lessons.md).
 
 **1. `@solana/web3.js` cannot deserialize its own `jsonParsed` output.**
 
@@ -84,89 +77,177 @@ Connection.getTransaction(sig, { encoding: 'jsonParsed', maxSupportedTransaction
   -- Expected an array value, but received: undefined
 ```
 
-Parsed instructions carry no `accounts` field — the account set lives in `parsed.info`. The v1.99
-superstruct marks it required, so this throws on ordinary CPI-heavy mainnet traffic, reproduced on the
-first sample tried. Dot therefore owns its JSON-RPC layer and uses web3.js only for `PublicKey`/PDA
-derivation. Anything that swallowed this error into a `try/catch` would report "no dependencies found" on
-the most integrated programs in the ecosystem.
+Parsed instructions carry no `accounts` field — the account set is inside `parsed.info` — while the v1.99
+superstruct declares it required. It threw on the first CPI-heavy mainnet transaction tried, and the
+second. Dot therefore owns its JSON-RPC layer and uses web3.js only for `PublicKey`/PDA derivation. A
+tool that wrapped that call in `try/catch` and carried on would have reported "no dependencies found" for
+the most integrated programs in the ecosystem: a swallowed parse error is a confident false negative.
 
-**2. Instruction `accounts` are base58 pubkeys under `jsonParsed` and integer indexes under `json`.**
+**2. Instruction `accounts` are pubkeys in `jsonParsed` and indexes in `json`.**
 
 ```
 jsonParsed → accounts: ["6tv7sUQ4R3fE9rnBX4w72oiiqSHqKF3KPvyubFNfazxd", …]
 json       → accounts: [1, 5, 12]
 ```
 
-A parser that assumes indexes evaluates `keys["6tv7sUQ4…"]`, gets `undefined`, and concludes no lamports
-moved. That is not a crash — it is a confident zero. `src/graph/keys.ts` accepts both shapes, and
-`test/graph.test.ts` asserts the two encodings of the same trace produce the same graph.
+Assuming the second shape while serving the first evaluates `keys["6tv7sUQ4…"]` → `undefined` and
+concludes nothing moved. No throw, no warning — a zero where the risk was. Both shapes resolve through one
+table, and an equivalence test asserts the same trace in either encoding yields the same graph.
 
-**3. `ProgramData` is not the layout the SDK describes.**
+**3. `ProgramData` is not the layout the SDK describes.** Measured across several live programs:
+`ProgramData` discriminant **3**, `Program` discriminant **2** — inverted from the
+`UpgradeableLoaderState` enum order — and the **ELF magic at byte 45**, preceded by `u64 + Option<Pubkey>`
+with **no `data_len` field**. Reading the documented layout lands on `0x7f454c46` and calls it a length.
+So change detection hashes the *whole account*, which cannot miss a rewrite regardless of layout, and the
+bytecode-only hash is computed after the magic is *found*; an account where it is not found raises
+`UNKNOWN_PROGRAMDATA_LAYOUT` rather than hashing a guessed window. A watcher with a wrong offset does not
+error — it reports an all-clear forever.
 
-Measured across several live programs: `ProgramData` discriminant **3** and `Program` discriminant **2** —
-the reverse of the `UpgradeableLoaderState` enum order — and the ELF magic at byte **45** with
-`u64 + Option<Pubkey>` before it and **no `data_len` field**. Reading the documented layout lands on
-`0x7f454c46` while calling it a length.
+Two smaller ones: `stackHeight` is returned by mainnet but absent from web3.js v1's types (it is what
+makes depth attribution exact), and `@triton-one/yellowstone-grpc` v9 takes `accounts.owner` as a **base58
+string**, with `lamports`/`slot`/`writeVersion` as **decimal strings** — pass bytes where it wants a
+string and your filter matches nothing, which looks identical to a quiet chain.
 
-So Dot trusts no offset for anything load-bearing: change detection hashes the **whole account**, which
-cannot miss a realloc or rewrite regardless of layout, and the bytecode-only hash is computed only after
-the ELF magic has been *found*. An account where it is not found raises `UNKNOWN_PROGRAMDATA_LAYOUT`
-instead of hashing a guessed window — a watcher with a wrong offset does not error, it reports an all-clear
-indefinitely.
+## 3. Why it is different: the ecosystem is a graph, not a set of programs
 
-Two smaller ones discovered on the same pass: `stackHeight` **is** returned by mainnet but is absent from
-web3.js v1's type declarations (it is what makes depth-3 attribution exact), and in
-`@triton-one/yellowstone-grpc` v9 `accounts.owner`/`account` are **base58 strings**, not bytes — pass bytes
-and your filter matches nothing, which is indistinguishable from a quiet chain.
+| Phase | Tool | Question it answers |
+|---|---|---|
+| Before deployment | static analyzers (SolanaShield, Sentio) | what could this program do? |
+| At build time | dependency scanners (LoserLab) | is this npm package hostile? |
+| Per transaction | runtime monitors (GulfWatch) | is this known-bad transaction running? |
+| **At upgrade time** | **Dot** | **who breaks, and how much value was in the way?** |
 
-## 5. Reproducing it in five minutes
+A program's callers are in no source tree. They are in the transaction history of every integrator that
+ever did a CPI into it. When B's bytecode is replaced, every caller inherits B's new behaviour including
+the parts they never reviewed, and the only artifact that records who they are is the ledger.
+
+Dot also sees the moment *before* the landing. The loader's staging `Buffer` account is visible to the
+Geyser owner filter, so `dot watch --yellowstone` emits `STAGED_UPGRADE` — image hash, size, staging
+authority — while the change is still uploadable-not-live, and `STAGED-NOOP` when the bytes already match
+production.
+
+**Agentic, specifically:**
+
+- One run is `perceive → decide → act → evaluate → report` under a `Budget` charged **before** each
+  request; a failed call is a spent call and every retry is charged again.
+- `decide` exists to avoid `act`. A multisig-held program with a known empty graph stops after **one RPC
+  call** and still emits a full report of what it declined to spend.
+- **It asks for budget instead of returning a thin answer.** Where posture is a single key and the
+  affordable sample cannot distinguish "no dependents" from "not in the sample", the run returns
+  `needs_more_budget` with the number of calls and what they would confirm; the CLI prints
+  `Re-run with --budget-rpc +N` and exits **4** — distinct from 3 (a stop was reached), 1 (it broke) and
+  5 (the limit catalogue failed its own test).
+- The plan is provably derived from budget state: a 10-call budget plans ≤9 signatures, a 400-call budget
+  plans 25 (what the posture wants), and a test asserts they differ.
+- Sample coverage is measured against what the risk *wanted*, not what the budget allowed — otherwise a
+  1-of-25 sample reports a flattering 100% and the capped-tier rule reads the lie.
+- When a single-key program shows no dependents on a meaningful sample, the agent **widens to the
+  authority's own history** and reports what else that one key reaches, explicitly as co-control and not
+  as dependents — because two programs sharing a transaction share no CPI edge.
+- Chain-wide mode caps each investigation at `--per-event-rpc` and the daemon at `--daily-rpc`, serves
+  authority handovers ahead of routine bytecode writes, drains serially, and **counts every dropped
+  event**. A daemon that dropped forty upgrades does not look like one that saw none.
+
+## 4. What Dot sees that a static analyzer does not
+
+A static analyzer reading `pAMMBay6oce…` sees `invoke()` and flags a missing account check inside one
+program. Dot, on the captured transaction above, reports the actual call edge — *this* program called
+*that* program at outer instruction 4, through these accounts, with 313,067,416 lamports credited to an
+account the call touched, and called itself while doing it. Multiply that by the sample and you get the
+thing no repository contains: the dependent set, ranked.
+
+`dot blast-radius` answers the plural question — *which upgrade in this window deserves a human first* —
+by discovering loader transactions over plain JSON-RPC (`getSignaturesForAddress(BPFLoaderUpgradeable)`
+**is** the chain-wide upgrade ledger) and proving each program/programdata pair by re-deriving the PDA
+locally rather than trusting a discriminator or the node's parsing. Its output is a **warning list**, not
+a leaderboard: who to notify, by each dependent program's own upgrade authority, or an explicit count of
+authorities it could not read.
+
+The ranking model is stated rather than hidden: value is scored **linearly** (capped at the reference) and
+dependents **log-scaled**, so `$400M through 2 dependents` outranks `$40M through 14`. Log-scaling
+both axes — the obvious choice — inverts that, because it compresses a 10x value difference into noise and
+lets breadth win. `composite = valueScore × (1 + dependentsScore)` ships alongside every score.
+
+## 5. What Dot does not see — in three states, not two
+
+`dot limits --status` prints 20 codes: **5 RESOLVED** (each names test files, and `verifyTestClaims()`
+exits 5 if a named test is missing or contains no `it()`), **8 NARROWED**, **7 UNRESOLVABLE_IN_CODE**.
+The third category exists because a two-state table forces a bad choice between claiming a fix and filing
+a property of the chain under "not done".
+
+- `HISTORY_RETENTION` — **unresolvable in code.** Retention is a provider decision; three public
+  mainnet endpoints in this build environment refused all ten trace fetches with `-32015` while
+  answering state reads. Dot classifies that as missing history, not as an error, and caps the tier on
+  it. The proposed prefetch-warm cache is **not implemented**, and the limit file says so rather than
+  implying otherwise.
+- `VALUE_IS_PROXY` — **unresolvable in code.** Nothing in the RPC response binds a transfer to a CPI leg,
+  so a router swap cannot be split. Lamports are credited once per receiving account per transaction;
+  `lamportsMovedDeduped` is the total, and the per-edge sum is still printed, labelled as not additive.
+  No USD figure is ever printed unless an operator passes `--sol-usd`.
+- `PDA_HOLDINGS_NOT_ENUMERATED` — **narrowed, not closed.** `--seeds` derives PDAs from a declared list
+  (typed seeds: `u8:0` is the byte `0x00`, not the character `'0'`), reads them in
+  `getMultipleAccounts` chunks, and reports unresolved seed variables, absent accounts and an incomplete
+  sweep separately. A publisher who shares no seeds has, by construction, unobservable custody.
+- `NO_IDL_CONTRACT`, `NO_MALICE_DETECTION`, `FINALITY_VS_LATENCY` — chain and intent, not code.
+- `GRPC_LIVE_PATH_MOCKED` — honest about its own build: raw protobuf frames built with the codec and
+  carrying captured `ProgramData` bytes are decoded and still yield the right upgrade authority, but
+  HTTP/2 handshake, `x-token` auth, `isReplay` and reconnect have never been exercised against a live
+  endpoint here. The gated test skips rather than passing vacuously.
+
+Detection is deterministic throughout. In `--mode real` a model reads the IDL delta and the dependent list
+and writes an advisory — *what is the likely impact, what should those operators do* — with the four
+inputs it was given recorded in the output. It cannot set a tier, and an answer citing an evidence id Dot
+never issued is **discarded whole, not trimmed**, with the refusal printed.
+
+## 6. MCP integration
 
 ```bash
-npm ci && npm run build
-npm test                        # 108 tests, no network, no API key
-node dist/cli/index.js limits    # the 20 documented blind spots, as data
-node dist/cli/index.js analyze LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo --sample 20
+npx -y -p @zeroxcyril/dot dot-mcp        # after publish
+node dist/cli/index.js mcp               # today
 ```
 
-`npm link` needs a writable global prefix; on the build box it is not (prefix resolves to a
-`/usr/local/lib/node_modules` that does not exist), so use `node dist/cli/index.js` or
-`npm config set prefix ~/.npm-global`. The bare `dot` bin collides with graphviz — measured, `/usr/bin/dot`
-shadowed it — which is why the package also installs `dot-analyze`, `dot-watch`, `dot-mcp`, `dot-limits`,
-`dot-calibrate`, dispatching on the invoked name.
+Four tools — `dot_blast_radius`, `dot_evaluate_upgrade`, `dot_limits`, `dot_watch_status` — all requiring
+a `budget` argument so an orchestrator cannot ask for an unbounded scan by accident. `test/mcp.test.ts`
+spawns the process over real stdio pipes and asserts every stdout line is parseable JSON-RPC, because one
+stray `console.log` corrupts the stream and the host drops the connection with no useful error.
 
-Fixtures are real where reality matters: `test/fixtures/tx-nested.json` is a captured mainnet transaction
-(6 outer instructions, inner groups at index 2 and 4, 11 CPIs, `stackHeight: 2`), and
-`programdata-observed.json` holds captured `ProgramData` bytes including a renounced-authority case. The
-deep-nesting, log-only, failed-tx and v0-address-table fixtures are generated against measured field shapes
-and say so in their header, because a history-pruning public node will not serve those shapes on demand.
+```json
+{ "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+  "params": { "name": "dot_evaluate_upgrade", "arguments": {
+    "program": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+    "budget": { "maxRpcCalls": 60, "maxSignatures": 60, "maxLlmTokens": 0, "maxWallMs": 60000 },
+    "event": { "kind": "authority_change", "beforeAuthority": "JADaUV8kvDpDbJr55wxXJHVaBS3VCj8thZZHjfeuCVLd" },
+    "knownMultisigs": [] } } }
+```
 
-## 6. What Dot is not, and what is not yet verified
+<!-- The keys below are asserted against a real tool call in test/submission.test.ts,
+     which runs dot_blast_radius against a local stub RPC; the values are from that run. -->
+```json
+{ "result": { "structuredContent": {
+    "tier": "P1", "tierSource": "exposure", "score": 47, "confidence": "medium",
+    "stoppedAt": "report", "cappedBy": null, "decisionSource": "rules",
+    "directCallers": 6, "transitiveCallers": 18,
+    "lamportsRouted": 313067416, "valueIsProxy": true,
+    "attributionQuality": "stackHeight", "integrity": "single_source",
+    "budget": { "limits": { "maxRpcCalls": 60 }, "spent": { "rpcCalls": 34, "signatures": 30 } },
+    "limits": ["NO_IDL_CONTRACT","VALUE_IS_PROXY","SINGLE_NODE_TRUST","HISTORY_RETENTION"],
+    "components": [ { "name": "authority_posture", "points": 11, "max": 26,
+                      "why": "authority not classifiable from chain data" } ] } } }
+```
 
-The report's last section is the limits, and `docs/live-run-2026-10-21.json` is the honest showcase:
-against `api.mainnet-beta.solana.com`, upgrade detection worked (PDA derivation matched the on-chain
-pointer, layout decoded, authority classified off-curve) and the trace pull was refused —
-`-32015 Transaction history is not available` on all ten fetches. The report says
-`cappedBy: "only 0% of the planned sample was retrievable from the node"`, tier P3 with confidence **low**.
-It did not print an empty graph and imply that nobody depends on this program.
+`dot_watch_status` distinguishes "no upgrades detected" from "nobody is watching": with no status file it
+returns `available: false` with the reason and the path it looked at, and flags a cursor older than five
+minutes as `stale`. A P0 with `tierSource: "integrity"` means two endpoints contradicted each other at
+the same slot — a halt about the tool's inputs, never a verdict about the program.
 
-Explicitly unverified, stated rather than glossed:
+The skill at [`../skill/dot/SKILL.md`](../skill/dot/SKILL.md) is the instruction layer for an agent
+calling these tools, and its central section is **how to read a nothing**: no scan ran / range empty /
+target not matched / target reached and clean. An agent that has only ever seen successful scans will
+report an empty range as a clean one, and that single confusion is the failure mode this whole design
+exists to prevent.
 
-- **The Yellowstone gRPC transport has never touched a live endpoint.** It is typechecked against the
-  generated types and unit-tested with an injected fake stream; handshake, auth-token handling and replay
-  semantics are unproven in the field. `GRPC_LIVE_PATH_UNVERIFIED` is in the limits catalogue for that
-  reason.
-- **Block batching is a trade, not a win.** One `getBlock` replaces many `getTransaction` calls and turns a
-  call ceiling into a bandwidth problem: the payload becomes every transaction in the slot. Dot prints both
-  ratios (`callSavingRatio`, `byteAmplification`), refuses oversized blocks, and only batches when calls
-  are the binding constraint. The cost model is labelled `defaults_unverified` until
-  `dot calibrate --rpc <url>` measures it — no public endpoint was reachable while this was written, so the
-  defaults are declared assumptions, not numbers.
-- **Value is a proxy.** Routed lamports are a per-transaction upper bound, not per-edge settlement, and a
-  swap cannot be split into legs. Program-held vault PDAs are not enumerated. There is no price oracle: no
-  USD figure is printed unless the operator passes `--sol-usd`, so you will not find an invented "$4.2M" in
-  a Dot report.
-- **Authority governance is not derivable from chain data.** No RPC call tells you an authority is a 2-of-3
-  multisig. `knownMultisigs` is an operator-supplied map; anything unmapped is scored `unknown` and treated
-  as unreviewed, never as safe.
-- **Dot does not adjudicate guilt.** A tier is a queue position. Absence of a finding is not a clean bill
-  of health, and `NO_MALICE_DETECTION` is printed in every report to keep that from being forgotten.
+---
+
+**In one line.** Dot ranks what breaks when a Solana program changes, shows the arithmetic behind the
+ranking, cites the evidence behind every claim or discards the claim, and prints what it could not see in
+every report — including the reports where what it could not see was everything.

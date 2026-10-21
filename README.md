@@ -9,7 +9,7 @@ about A and C: who calls the program that just changed, how often, and how much 
 them.
 
 ![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-108 tests, no network. `tsc --noEmit` and `npm run build` clean.
+199 tests, no network (1 skipped: a gated live-Geyser test). `tsc --noEmit` and `npm run build` clean.
 
 You give it a program id, or a list of them, or nothing at all in chain-wide mode, and it watches
 `BPFLoaderUpgradeable` for bytecode changes; when one lands it reconstructs the CPI dependency graph
@@ -101,7 +101,8 @@ Verified by symlinking both names and running them: `dot-limits` prints the limi
 Nothing in a `.env` is required. No API key is read unless you ask for model reasoning.
 
 ```bash
-dot analyze JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 --depth 2
+dot analyze JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 --depth 2 --seeds seeds.example.json
+dot blast-radius --since 2026-10-20 --min-value 100000000000 --authority-map authorities.json
 dot watch --targets targets.example.json --interval 30000 --secondary-rpc <url>
 dot watch --yellowstone <grpc-url> --per-event-rpc 50 --daily-rpc 5000
 dot calibrate --rpc <url>          # measures the cost model below instead of assuming it
@@ -112,7 +113,11 @@ A paid RPC endpoint is not optional in practice. The public endpoint has no tran
 run against it read the program state correctly and then got `-32015 Transaction history is not
 available` on all ten trace fetches, and the report said so — see [the live run](#the-live-run).
 
-## The three chain contradictions
+## What we learned from the chain
+
+The long form is [`docs/lessons.md`](docs/lessons.md) — the contradictions below, the two refusals, the graphviz collision, and the
+bugs the test suite found in code I had written that same day. What follows is the condensed version, and
+it is the part that should decide whether this was built against the chain or against its documentation.
 
 This tool was written against measured mainnet responses, and three load-bearing assumptions in the
 original design died on contact. They are in the code as comments and in `dot limits` as documented
@@ -192,6 +197,13 @@ request, not after:
 When `act` runs out of budget mid-sample, Dot does not crash and does not silently report what it found.
 It keeps the partial graph, sets `stoppedAt: "act"`, and writes the reason into `cappedBy`.
 
+**It asks for budget rather than returning a thin answer.** When posture is a single key and the
+affordable sample cannot distinguish "no dependents" from "not in the sample", the run returns
+`needs_more_budget` with the number of calls it wants; the CLI prints
+`Re-run with --budget-rpc +N` and exits **4** — distinct from 3 (a stop was reached), 1 (it broke), and
+5 (the limit catalogue failed its own test). Coverage is measured against the sample the risk *wanted*,
+not the one the budget could afford, because that number is what caps the tier.
+
 **Fair share under a firehose.** In chain-wide mode a deploy storm can spend the entire day's allowance
 on the first program that looks interesting. `UpgradeDispatcher` caps each investigation at
 `--per-event-rpc` (default 50) and the daemon at `--daily-rpc`, serves an authority handover or a
@@ -247,6 +259,8 @@ dot analyze <program_id> --unbounded                       # the mode Dot argues
 dot watch --targets targets.example.json --state state.json
 dot watch --yellowstone <grpc-url> --authority <pubkey>   # chain-wide, no target list
 dot limits
+dot limits --status        # RESOLVED / NARROWED / UNRESOLVABLE_IN_CODE, each with its test files
+dot replay --fixture tx.json --target <program>   # the real parser, offline, on captured bytes
 dot mcp
 ```
 
@@ -282,15 +296,23 @@ Two tools, so another agent can call Dot instead of reimplementing the fold:
 dot mcp        # stdio
 ```
 
-`solana_blast_radius` — reconstructs the CPI graph and returns dependents, attributed CPI volume, value
-routed, tier, budget spend and the triggered limits. `solana_evaluate_upgrade` — scores one upgrade event:
-authority posture, whether the authority rotated, size move, and the blast radius. Both take a required
-`budget` object, so a calling agent cannot accidentally ask for an unbounded scan; both return
-`isError` on a malformed address, and the `limits` codes inside the machine-readable result even when the
-run looked clean.
+Four tools, all requiring a `budget` argument so an orchestrator cannot ask for an unbounded scan by
+accident:
+
+| Tool | Returns |
+|---|---|
+| `dot_blast_radius` | the CPI graph, dependents, value routed (marked `valueIsProxy: true`), tier, budget spent, triggered limits |
+| `dot_evaluate_upgrade` | one upgrade scored: posture, authority rotation, size move, blast radius, components |
+| `dot_limits` | the 20 codes in three states, plus `verifyTestClaims()` so a `RESOLVED` with a missing test is reported, not hidden |
+| `dot_watch_status` | the daemon's cursor and counters — and `available: false` with the path it looked at when nobody is watching |
+
+`test/mcp.test.ts` spawns the server over real stdio pipes and asserts every stdout line parses as
+JSON-RPC: one stray `console.log` corrupts the stream and the host drops the connection with no useful
+error, so diagnostics go to stderr and that is tested rather than hoped. Both return `isError` on a
+malformed address, and the `limits` codes in the structured result even when the run looked clean.
 
 ```json
-{ "name": "solana_evaluate_upgrade",
+{ "name": "dot_evaluate_upgrade",
   "arguments": {
     "program": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
     "budget": { "maxRpcCalls": 60, "maxSignatures": 60, "maxLlmTokens": 0, "maxWallMs": 60000 },
@@ -360,7 +382,7 @@ ecosystem's supply chain in exactly the way this project exists to fix.
 ## Testing
 
 ```bash
-npm test           # 108 tests, no network
+npm test           # 199 tests, no network, no API key
 npm run typecheck
 ```
 

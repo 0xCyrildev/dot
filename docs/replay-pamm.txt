@@ -1,4 +1,4 @@
-Replayed test/fixtures/tx-nested.json — captured from api.mainnet-beta.solana.com on 2026-10-21 (test/fixtures/tx-nested.json)
+Replayed test/fixtures/tx-nested.json — captured from api.mainnet-beta.solana.com on 2026-10-21
 slot 459628002  version legacy  succeeded  keys via static_only
 6 outer instruction(s), 2 inner group(s), 11 CPI instruction(s), attribution stackHeight
 
