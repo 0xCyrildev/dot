@@ -164,3 +164,81 @@ describe('node history refusals are classified as blindness, not as errors', () 
     expect(report.evidence.some((e) => /pruned of|were unavailable/.test(e.summary) || /unavailable/.test(e.summary))).toBe(true);
   });
 });
+
+describe('endpoint disagreement halts rather than reports', () => {
+  it('emits a P0 whose source is integrity, not exposure, and never runs a trace pull', async () => {
+    const transport = new FakeTransport([accountRoute(AUTH), sigsRoute(20), txRoute(txFixture('tx-depth3'))]);
+    const budget = new Budget({ maxRpcCalls: 100, maxSignatures: 100 });
+    const scout = new Scout({
+      client: new SolanaClient({ transport, budget, commitment: 'finalized' }),
+      budget,
+      decision: new RuleBasedDecision({}),
+      mode: 'rules',
+      resilient: {
+        quorum: async () => ({
+          agreement: 'disagreed' as const,
+          account: null,
+          endpoints: [
+            { url: 'https://a.test', ok: true, slot: 4000 },
+            { url: 'https://b.test', ok: true, slot: 4000 },
+          ],
+          reason: 'endpoints agree on slot 4000 but disagree on the account bytes',
+          halt: true,
+        }),
+      },
+    });
+    const report = await scout.run({ program: TARGET });
+    expect(report.tier).toBe('P0');
+    expect(report.tierSource).toBe('integrity');
+    expect(report.stoppedAt).toBe('perceive');
+    expect(report.blastRadius).toBeNull();
+    expect(report.decision).toBeNull();
+    expect(report.integrity?.agreement).toBe('disagreed');
+    expect(report.components[0]?.name).toBe('endpoint_disagreement');
+    // The trace pull never happened: a halt is not a partial analysis.
+    expect(transport.calls.filter((c) => c.method === 'getSignaturesForAddress')).toHaveLength(0);
+    expect(renderMarkdown(report)).toContain('DATA INTEGRITY');
+  });
+
+  it('carries on when the endpoints merely answered at different slots', async () => {
+    const transport = new FakeTransport([accountRoute(AUTH), sigsRoute(1), txRoute(txFixture('tx-depth3'))]);
+    const budget = new Budget({ maxRpcCalls: 100, maxSignatures: 100 });
+    let calls = 0;
+    const scout = new Scout({
+      client: new SolanaClient({ transport, budget, commitment: 'finalized' }),
+      budget,
+      decision: new RuleBasedDecision({}),
+      mode: 'rules',
+      resilient: {
+        quorum: async () => {
+          calls++;
+          const account = { address: 'PD', lamports: 1, owner: BPF_LOADER_UPGRADEABLE, data: programDataBytes(AUTH) };
+          return { agreement: 'slot_mismatch' as const, account, endpoints: [], reason: 'different slots; inconclusive', halt: false };
+        },
+      },
+    });
+    const report = await scout.run({ program: TARGET });
+    expect(report.tierSource).toBe('exposure');
+    expect(report.integrity?.agreement).toBe('slot_mismatch');
+    expect(report.evidence.some((e) => /slot_mismatch/.test(e.summary))).toBe(true);
+    expect(calls).toBe(1);
+  });
+});
+
+describe('cursor walk termination', () => {
+  it('stops paying when the provider returns an overlapping window', async () => {
+    const transport = new FakeTransport([
+      accountRoute(AUTH),
+      sigsRoute(3),
+      txRoute(txFixture('tx-depth3')),
+    ]);
+    const budget = new Budget({ maxRpcCalls: 100, maxSignatures: 100 });
+    const report = await makeScout(transport, budget).run({ program: TARGET });
+    const sigCalls = transport.calls.filter((c) => c.method === 'getSignaturesForAddress').length;
+    // Without the no-progress guard this loop spends the entire 100-call budget
+    // re-reading the same three signatures.
+    expect(sigCalls).toBeLessThanOrEqual(3);
+    expect(report.evidence.some((e) => /no progress/.test(e.summary))).toBe(true);
+    expect(report.budget.spent.rpcCalls).toBeLessThan(20);
+  });
+});

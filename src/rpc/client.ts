@@ -8,6 +8,14 @@ import type {
 } from './wire.js';
 import type { RpcTransport, WithContext } from './transport.js';
 
+function safeJsonBytes(v: unknown): number | null {
+  try {
+    return Buffer.byteLength(JSON.stringify(v ?? null));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * JSON-RPC codes and message shapes that mean "this node cannot serve that
  * history", as distinct from "your request was wrong". Codes vary by client
@@ -31,7 +39,10 @@ export type RpcMethod =
   | 'getMultipleAccounts'
   | 'getSlot'
   | 'getVersion'
-  | 'getProgramAccounts';
+  | 'getProgramAccounts'
+  | 'getBlock'
+  | 'getBlocks'
+  | 'getBlocksWithLimit';
 
 export type RetryPolicy = { maxAttempts: number; baseDelayMs: number };
 
@@ -40,6 +51,10 @@ export type ClientStats = {
   retries: number;
   pruned: number;
   failed: number;
+  /** Bytes the endpoints actually sent. Call count alone hides the real cost of block batching. */
+  bytes: number;
+  /** True when the number is a local estimate because the response had no content-length. */
+  bytesEstimated: boolean;
   byMethod: Record<string, number>;
   /** JSON-RPC error codes seen, verbatim — provider semantics vary, so keep the raw code. */
   rpcErrorCodes: Record<string, number>;
@@ -86,6 +101,8 @@ export class SolanaClient {
     retries: 0,
     pruned: 0,
     failed: 0,
+    bytes: 0,
+    bytesEstimated: false,
     byMethod: {},
     rpcErrorCodes: {},
   };
@@ -103,6 +120,11 @@ export class SolanaClient {
     return { ...this.stats, byMethod: { ...this.stats.byMethod }, rpcErrorCodes: { ...this.stats.rpcErrorCodes } };
   }
 
+  resetByteCounter(): void {
+    this.stats.bytes = 0;
+    this.stats.bytesEstimated = false;
+  }
+
   /** Charge first, then ask. A refused charge propagates as BudgetExhaustedError. */
   private async call<T>(method: RpcMethod, params: unknown): Promise<T> {
     let lastError: unknown;
@@ -112,6 +134,7 @@ export class SolanaClient {
       this.stats.byMethod[method] = (this.stats.byMethod[method] ?? 0) + 1;
       try {
         const res = await this.transport.request<T>(method, params);
+        this.accountBytes(method, res);
         // The transport interface allows a JSON-RPC error envelope rather than a
         // thrown error. Reading `result` off it without this check would hand the
         // caller `undefined` and look exactly like "account does not exist".
@@ -164,19 +187,34 @@ export class SolanaClient {
   }
 
   async getAccountInfo(address: string): Promise<AccountInfo | null> {
+    const { account } = await this.getRawAccountInfo(address);
+    return account;
+  }
+
+  /**
+   * `context.slot` is not decoration. Two endpoints holding different bytes for the
+   * same account at *different* slots are describing chain progress; at the *same*
+   * slot they are contradicting each other. Any corrouption check that cannot tell
+   * those apart cries wolf on every upgrade.
+   */
+  async getRawAccountInfo(address: string): Promise<{ slot: number; account: AccountInfo | null }> {
     const res = await this.call<WithContext<WireAccountState<[string, 'base64']> | null>>(
       'getAccountInfo',
       [address, { encoding: 'base64', commitment: this.commitment }],
     );
     const value = res?.value ?? null;
-    if (!value) return null;
+    const slot = res?.context?.slot ?? 0;
+    if (!value) return { slot, account: null };
     const [b64] = value.data;
     return {
-      address,
-      lamports: value.lamports,
-      owner: value.owner,
-      executable: value.executable,
-      data: Buffer.from(b64, 'base64'),
+      slot,
+      account: {
+        address,
+        lamports: value.lamports,
+        owner: value.owner,
+        executable: value.executable,
+        data: Buffer.from(b64, 'base64'),
+      },
     };
   }
 
@@ -253,6 +291,70 @@ export class SolanaClient {
         data: Buffer.from(b64, 'base64'),
       };
     });
+  }
+
+  /**
+   * Prefer the transport's reported wire size; `getBlock` with `jsonParsed` moves
+   * tens of megabytes and a tool that counts only calls will happily recommend the
+   * most expensive option. Falls back to a local serialization estimate and says so.
+   */
+  private accountBytes(method: string, res: { result?: unknown }): void {
+    const reported = this.transport.reportedBytes?.();
+    if (typeof reported === 'number' && reported > 0) {
+      this.stats.bytes += reported;
+      this.stats.bytesEstimated = this.stats.bytesEstimated || false;
+      return;
+    }
+    // No transport-reported size: estimate locally and flag it. Gating this on
+    // elapsed time would silently drop the byte count for every fast response,
+    // which is precisely the case a fake or a cached endpoint produces.
+    if (!this.stats.bytesEstimated) {
+      const size = safeJsonBytes(res.result);
+      if (size !== null) {
+        this.stats.bytes += size;
+        this.stats.bytesEstimated = true;
+      }
+    }
+  }
+
+  /**
+   * One call, one whole block. This is the batching lever: the RPC *call* count
+   * stops scaling with transactions. The byte count scales the other way, which is
+   * why `plan()` in `src/graph/batcher.ts` reports both and does not assume the
+   * cheaper-looking option is cheaper.
+   */
+  async getBlock(
+    slot: number,
+    cfg: { transactionDetails?: 'full' | 'accounts' | 'signatures' | 'none'; logMessages?: boolean; rewards?: boolean } = {},
+  ): Promise<import('./wire.js').WireBlock | null> {
+    const res = await this.call<import('./wire.js').WireBlock | null>('getBlock', [
+      slot,
+      {
+        encoding: 'jsonParsed',
+        maxSupportedTransactionVersion: this.maxVersion,
+        commitment: this.commitment,
+        transactionDetails: cfg.transactionDetails ?? 'full',
+        rewards: cfg.rewards ?? false,
+        ...(cfg.logMessages === undefined ? {} : { logMessages: cfg.logMessages }),
+      },
+    ]);
+    return res ?? null;
+  }
+
+  /**
+   * Slots of produced blocks in a range. Skipped slots are simply absent, which is
+   * the reason `getBlock` legitimately returns null and Dot must not read that as a
+   * provider fault. Providers cap the range length differently and the cap is not
+   * introspectable, so it is a configured constant, not a guess.
+   */
+  async getBlocks(first: number, last: number): Promise<number[]> {
+    const res = await this.call<number[]>('getBlocks', [first, last, { commitment: this.commitment }]);
+    return res ?? [];
+  }
+
+  async getBlocksWithLimit(first: number, limit: number): Promise<number[]> {
+    const res = await this.call<number[]>('getBlocksWithLimit', [first, limit, { commitment: this.commitment }]);
+    return res ?? [];
   }
 
   private commitmentOnly(): Record<string, unknown> {

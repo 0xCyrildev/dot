@@ -18,6 +18,8 @@ export type JsonRpcResponse<T> = {
 export interface RpcTransport {
   readonly endpoint: string;
   request<T>(method: string, params: unknown): Promise<JsonRpcResponse<T>>;
+  /** Wire size of the last response, when the transport can know it. */
+  reportedBytes?(): number | null;
   close?(): void | Promise<void>;
 }
 
@@ -33,6 +35,7 @@ export class HttpTransport implements RpcTransport {
   private readonly headers: Record<string, string>;
   private readonly doFetch: typeof fetch;
   private seq = 0;
+  private lastBytes: number | null = null;
 
   constructor(endpoint: string, opts: HttpTransportOptions = {}) {
     this.endpoint = endpoint;
@@ -52,6 +55,10 @@ export class HttpTransport implements RpcTransport {
     } catch {
       return '<unparseable-endpoint>';
     }
+  }
+
+  reportedBytes(): number | null {
+    return this.lastBytes;
   }
 
   async request<T>(method: string, params: unknown): Promise<JsonRpcResponse<T>> {
@@ -94,6 +101,9 @@ export class HttpTransport implements RpcTransport {
     if (!res.ok) {
       throw new DotError('RPC_TRANSPORT', `${method} got HTTP ${res.status}`, { method, status: res.status });
     }
+
+    const len = Number(res.headers.get('content-length') ?? '0');
+    this.lastBytes = Number.isFinite(len) && len > 0 ? len : null;
 
     let body: JsonRpcResponse<T>;
     try {

@@ -30,6 +30,12 @@ export type DotReport = {
   programData: string;
   event: string;
   tier: RiskTier;
+  /**
+   * What the tier is a statement about. `exposure` is the ordinary reading: posture
+   * and blast radius. `integrity` means the tool's own inputs contradicted each
+   * other and the run halted — a P0 of attention, never a verdict on the program.
+   */
+  tierSource: 'exposure' | 'integrity' | 'not_assessed';
   score: number;
   confidence: 'high' | 'medium' | 'low';
   components: RiskComponent[];
@@ -55,6 +61,15 @@ export type DotReport = {
   } | null;
   graph: Graph | null;
   evidence: Evidence[];
+  integrity?: { agreement: string; reason: string; endpoints: unknown[] };
+  ingest?: {
+    strategy: 'per_block' | 'per_signature';
+    rationale: string;
+    groups: number;
+    byteAmplification?: number;
+    callSavingRatio?: number;
+    summary?: unknown;
+  };
   limits: LimitNote[];
   narrative?: Narrative;
   budget: BudgetSnapshot;
@@ -66,10 +81,26 @@ const SOL = 1_000_000_000;
 
 export function renderMarkdown(r: DotReport): string {
   const L: string[] = [];
-  const tierFlag = r.tier === 'P0' ? ' ← act now' : '';
+  const tierFlag =
+    r.tier === 'P0' && r.tierSource === 'integrity'
+      ? ' ← DATA INTEGRITY, not a program verdict'
+      : r.tier === 'P0'
+        ? ' ← act now'
+        : '';
   L.push(`# Dot · ${r.label ? `${r.label} · ` : ''}${r.program}`);
   L.push('');
-  L.push(`**${r.tier}** (score ${r.score}/100, confidence ${r.confidence})${tierFlag} — event \`${r.event}\`, mode \`${r.mode}\`, run ended at \`${r.stoppedAt}\``);
+  L.push(`**${r.tier}** (tier source: ${r.tierSource}, score ${r.score}/100, confidence ${r.confidence})${tierFlag} — event \`${r.event}\`, mode \`${r.mode}\`, run ended at \`${r.stoppedAt}\``);
+  if (r.integrity) {
+    L.push('');
+    L.push(`**Endpoint corroboration: \`${r.integrity.agreement}\`** — ${r.integrity.reason}`);
+    for (const e of r.integrity.endpoints as Array<{ url: string; ok: boolean; slot: number | null; error?: string }>) {
+      L.push(`- \`${e.url}\` ${e.ok ? `ok @ slot ${e.slot}` : `FAILED: ${e.error ?? 'unknown'}`}`);
+    }
+  }
+  if (r.ingest) {
+    L.push('');
+    L.push(`Trace ingestion: \`${r.ingest.strategy}\` — ${r.ingest.rationale}`);
+  }
   if (r.cappedBy) L.push('');
   if (r.cappedBy) L.push(`> Tier capped by a blind spot: ${r.cappedBy}`);
   L.push('');

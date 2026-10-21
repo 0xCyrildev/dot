@@ -7,7 +7,12 @@
     "node": ">=20"
   },
   "bin": {
-    "dot": "./dist/cli/index.js"
+    "dot": "./dist/cli/index.js",
+    "dot-analyze": "./dist/cli/index.js",
+    "dot-watch": "./dist/cli/index.js",
+    "dot-mcp": "./dist/cli/index.js",
+    "dot-limits": "./dist/cli/index.js",
+    "dot-calibrate": "./dist/cli/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,7 +30,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dot": "node --import tsx src/cli/index.ts",
-    "mcp": "node --import tsx src/mcp/server.ts"
+    "mcp": "node --import tsx src/mcp/server.ts",
+    "postbuild": "chmod +x dist/cli/index.js"
   },
   "keywords": [
     "solana",
@@ -40,6 +46,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@solana/web3.js": "^1.99.0",
+    "@triton-one/yellowstone-grpc": "^9.0.1",
     "bs58": "^6.0.0",
     "commander": "^12.1.0",
     "zod": "^3.25.76"

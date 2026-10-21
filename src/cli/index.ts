@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from 'node:fs/promises';
 import { Command } from 'commander';
-import { Budget } from '../agent/budget.js';
+import { Budget, type BudgetLimits } from '../agent/budget.js';
 import { EvidenceLedger } from '../agent/evidence.js';
 import { RuleBasedDecision } from '../agent/rules.js';
 import { RealLlmDecision, llmConfigFromEnv, narrateIdlDiff } from '../agent/llm.js';
@@ -9,6 +9,15 @@ import { Scout, type PriorDigest } from '../agent/scout.js';
 import { HttpTransport } from '../rpc/transport.js';
 import { SolanaClient } from '../rpc/client.js';
 import { UpgradeWatcher, type WatchTarget, type UpgradeEvent } from '../watcher/watcher.js';
+import { UpgradeDispatcher } from '../watcher/dispatcher.js';
+import { ProgramIndex } from '../state/programIndex.js';
+import { decodeProgramData, type ProgramDataState } from '../state/programdata.js';
+import { BPF_LOADER_UPGRADEABLE } from '../ids.js';
+import type { AccountUpdate } from '../rpc/yellowstone.js';
+import type { ObservedState as ObservedStateLike } from '../watcher/watcher.js';
+import { YellowstoneUpgradeFeed } from '../rpc/yellowstone.js';
+import { ResilientClient } from '../rpc/resilient.js';
+import { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
 import { resolveIdl } from '../idl.js';
 import { renderMarkdown, type DotReport } from '../report.js';
 import { LIMIT_NOTES } from '../limits.js';
@@ -19,8 +28,33 @@ import { isWellFormedPubkey } from '../ids.js';
 const DEFAULT_RPC = 'https://api.mainnet-beta.solana.com';
 const program = new Command();
 
+/**
+ * This tool's bin is `dot`, and `/usr/bin/dot` is graphviz — measured on this box,
+ * where a linked `dot` was silently shadowed by it and `dot limits` produced
+ * "can't open limits". The unambiguous aliases dispatch on the invoked name, so an
+ * install that lands after graphviz on PATH still reaches the right program.
+ */
+const ALIAS_COMMANDS: Record<string, string> = {
+  'dot-analyze': 'analyze',
+  'dot-watch': 'watch',
+  'dot-mcp': 'mcp',
+  'dot-limits': 'limits',
+  'dot-calibrate': 'calibrate',
+};
+
+const invokedAs = (process.argv[1] ?? '').split('/').pop() ?? '';
+const alias = ALIAS_COMMANDS[invokedAs];
+if (alias && process.argv[2] !== alias) {
+  process.argv.splice(2, 0, alias);
+}
+
 type GlobalOpts = {
   rpc?: string;
+  secondaryRpc?: string;
+  ingest: string;
+  costModel?: string;
+  depth: string;
+  solUsd?: string;
   mode: string;
   budgetRpc: string;
   budgetTokens: string;
@@ -36,6 +70,10 @@ type GlobalOpts = {
   out?: string;
 };
 
+function parseBudgetFrom(limits: { maxRpcCalls: number; maxSignatures: number; maxLlmTokens: number; maxWallMs: number }, _o: GlobalOpts): Budget {
+  return new Budget(limits);
+}
+
 function parseBudget(o: GlobalOpts): Budget {
   if (o.unbounded) return Budget.unlimited();
   return new Budget({
@@ -47,6 +85,7 @@ function parseBudget(o: GlobalOpts): Budget {
 }
 
 async function build(o: GlobalOpts) {
+  void o.solUsd;
   const rpc = o.rpc ?? process.env.DOT_RPC_URL ?? DEFAULT_RPC;
   if (rpc === DEFAULT_RPC) {
     process.stderr.write(
@@ -65,13 +104,37 @@ async function build(o: GlobalOpts) {
   const decision = wantsReal && cfg ? new RealLlmDecision(cfg, rules, budget) : rules;
   const mode: 'rules' | 'real' = wantsReal && cfg ? 'real' : 'rules';
 
+  const endpoints: Array<{ client: SolanaClient; url: string }> = [{ client, url: rpc }];
+  if (o.secondaryRpc) {
+    const secondTransport = new HttpTransport(o.secondaryRpc);
+    endpoints.push({
+      client: new SolanaClient({
+        transport: secondTransport,
+        // Its own budget: sharing one would make the reported call count a fiction.
+        budget: new Budget({ ...budget.limits }),
+        commitment: o.commitment as 'finalized',
+      }),
+      url: o.secondaryRpc,
+    });
+  } else {
+    process.stderr.write(
+      'note: no --secondary-rpc. Nothing here is corroborated; see SINGLE_NODE_TRUST.\n',
+    );
+  }
+  const quorum = new ResilientClient(endpoints);
+  const model = await loadCostModel(o.costModel);
+  const batcher = o.ingest === 'signatures' ? undefined : new BlockBatcher(client, model, budget);
+
   const scout = new Scout({
     client,
     budget,
     decision,
     mode,
     knownMultisigs: o.multisig,
+    maxDepth: Number(o.depth),
     idlResolver: (p) => resolveIdl(p, { idl: o.idl, priorIdl: o.priorIdl, tryOnchain: o.tryOnchainIdl }, client),
+    ...(o.secondaryRpc ? { resilient: { quorum: (a: string) => quorum.getAccountInfoQuorum(a) } } : {}),
+    ...(batcher ? { batcher, ingest: o.ingest as 'auto' | 'blocks' | 'signatures' } : {}),
   });
   return { client, budget, scout, mode };
 }
@@ -97,6 +160,11 @@ program
   .option('--multisig <authority>', 'declare an authority you know to be a multisig (repeatable)', collect, [])
   .option('--force-full-trace', 'ignore the early-exit rule and pull traces anyway')
   .option('--commitment <c>', 'processed | confirmed | finalized', 'finalized')
+  .option('--secondary-rpc <url>', 'second endpoint; the upgrade hash is read from both and a same-slot contradiction halts the run')
+  .option('--ingest <mode>', 'auto | blocks | signatures (block batching trades RPC calls for bandwidth)', 'auto')
+  .option('--cost-model <file>', 'calibration JSON from `dot calibrate`')
+  .option('--depth <n>', 'transitive dependent hops to report', '3')
+  .option('--sol-usd <price>', 'operator-supplied SOL price; Dot has no price oracle and will not invent a USD figure')
   .option('--label <label>', 'human name for reports')
   .option('--format <fmt>', 'json | md | both', 'both')
   .option('--out <dir>', 'write report files into this directory instead of stdout')
@@ -149,7 +217,12 @@ program
   .option('--format <fmt>', 'json | md | both', 'both')
   .option('--out <dir>', 'write report files into this directory')
   .option('--state <file>', 'persist prior digests here so repeated runs get real Decide inputs')
-  .action(async (opts: GlobalOpts & { targets: string; interval: string; transport: string; once?: boolean; fireOnBaseline?: boolean; state?: string }) => {
+  .option('--yellowstone <url>', 'chain-wide feed from a Yellowstone/Geyser endpoint instead of polling the target list')
+  .option('--yellowstone-token <token>', 'auth token for the gRPC endpoint (or DOT_YELLOWSTONE_TOKEN); never echoed')
+  .option('--authority <pubkey>', 'server-side filter to one upgrade authority (memcmp at the measured offset)')
+  .option('--per-event-rpc <n>', 'max RPC calls for any single upgrade investigation', '50')
+  .option('--daily-rpc <n>', 'max RPC calls the daemon may spend before it starts dropping events', '5000')
+  .action(async (opts: GlobalOpts & { targets: string; interval: string; transport: string; once?: boolean; fireOnBaseline?: boolean; state?: string; yellowstone?: string; yellowstoneToken?: string; authority?: string; perEventRpc: string; dailyRpc: string }) => {
     const targets: WatchTarget[] = JSON.parse(await readFile(opts.targets, 'utf8'));
     if (!Array.isArray(targets) || targets.length === 0) {
       process.stderr.write('error: targets file must be a non-empty JSON array\n');
@@ -182,20 +255,194 @@ program
       ...(opts.fireOnBaseline ? { fireOnBaseline: true } : {}),
     });
 
+    const secondary = opts.secondaryRpc;
+    const costModel = await loadCostModel(opts.costModel);
+    // ---- Chain-wide mode. The target list becomes a fallback, not the design.
+    if (opts.yellowstone) {
+      const index = new ProgramIndex(daemonClient, daemonBudget);
+      const lastSeen = new Map<string, ObservedStateLike>();
+      let unresolved = 0;
+      let decoded = 0;
+
+      const analyzeWith = async (event: UpgradeEvent, limits: BudgetLimits) => {
+        const perUpgrade = parseBudgetFrom(limits, opts);
+        const rules = new RuleBasedDecision({});
+        const cfg = llmConfigFromEnv();
+        const useReal = opts.mode === 'real' && Boolean(cfg);
+        const analysisClient = new SolanaClient({
+          transport: client.transport,
+          budget: perUpgrade,
+          commitment: opts.commitment as 'finalized',
+        });
+        const analysisScout = new Scout({
+          client: analysisClient,
+          budget: perUpgrade,
+          decision: useReal && cfg ? new RealLlmDecision(cfg, rules, perUpgrade) : rules,
+          mode: useReal ? 'real' : 'rules',
+          knownMultisigs: [...opts.multisig],
+          idlResolver: (p) => resolveIdl(p, { idl: opts.idl, priorIdl: opts.priorIdl, tryOnchain: opts.tryOnchainIdl }, analysisClient),
+          prior,
+          maxDepth: Number(opts.depth),
+          ...(secondary
+            ? {
+                resilient: {
+                  quorum: (a: string) =>
+                    new ResilientClient([
+                      { client: analysisClient, url: opts.rpc ?? DEFAULT_RPC },
+                      {
+                        client: new SolanaClient({
+                          transport: new HttpTransport(secondary),
+                          budget: new Budget({ ...perUpgrade.limits }),
+                          commitment: 'finalized',
+                        }),
+                        url: secondary,
+                      },
+                    ]).getAccountInfoQuorum(a),
+                },
+              }
+            : {}),
+        });
+        const rep = await analysisScout.run({ program: event.program, event });
+        prior.set(event.program, {
+          at: Date.now(),
+          knownDependents: rep.blastRadius?.directCallers ?? 0,
+          lamportsRouted: rep.blastRadius?.lamportsRouted ?? 0,
+          tier: rep.tier,
+        });
+        if (opts.state) await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
+        process.stdout.write(
+          `${rep.tier}${rep.tierSource === 'integrity' ? ' [integrity]' : ''} score=${rep.score} conf=${rep.confidence} stopped=${rep.stoppedAt} rpc=${rep.budget.spent.rpcCalls} deps=${rep.blastRadius?.directCallers ?? 'n/a'} ${rep.program}\n`,
+        );
+        await emit(rep, opts);
+        return { program: event.program, tier: rep.tier, stoppedAt: rep.stoppedAt, rpcCalls: rep.budget.spent.rpcCalls };
+      };
+
+      const dispatcher = new UpgradeDispatcher(
+        (event, limits) => analyzeWith(event, limits),
+        { maxPerEvent: Number(opts.perEventRpc), dailyRpcTotal: Number(opts.dailyRpc) },
+      );
+
+      const feed = new YellowstoneUpgradeFeed({
+        endpoint: opts.yellowstone,
+        ...(opts.yellowstoneToken ? { xToken: opts.yellowstoneToken } : process.env.DOT_YELLOWSTONE_TOKEN ? { xToken: process.env.DOT_YELLOWSTONE_TOKEN } : {}),
+        commitment: 'finalized',
+        ...(opts.authority ? { authorityPubkey: opts.authority } : {}),
+      });
+      feed.on('pointer', (p: { programData: string; program: string }) => index.observePointer(p.programData, p.program));
+      feed.on('buffer', (u: { address: string; slot: number }) => {
+        process.stdout.write(`STAGED ${u.address} slot=${u.slot} (a Buffer write is an upgrade that has not landed)\n`);
+      });
+      feed.on('account', async (u: AccountUpdate) => {
+        const resolved = await index.resolve(u.address, u.txnSignature);
+        if (!resolved.program) {
+          unresolved++;
+          process.stderr.write(`unresolved ProgramData ${u.address} (${resolved.how}); dropped with a count, not silently\n`);
+          return;
+        }
+        let state;
+        try {
+          state = decodeProgramData({ address: u.address, lamports: Number(u.lamports), owner: BPF_LOADER_UPGRADEABLE, data: u.data }, resolved.program);
+        } catch (e) {
+          process.stderr.write(`layout refusal for ${resolved.program}: ${(e as Error).message}\n`);
+          return;
+        }
+        decoded++;
+        const before = lastSeen.get(u.address) ?? null;
+        const now: ObservedStateLike = {
+          programData: u.address,
+          bytecodeHash: state.bytecodeHash,
+          fullAccountHash: state.fullAccountHash,
+          authority: state.authority,
+          bytecodeLen: state.bytecodeLen,
+          accountLen: state.accountLen,
+          headerU64: state.headerU64,
+          observedAt: Date.now(),
+          closed: false,
+        };
+        lastSeen.set(u.address, now);
+        if (!before) {
+          // A Geyser write notification with no prior observation is still an
+          // upgrade signal (the account moved), but Dot cannot say what moved.
+          dispatcher.offer({
+            kind: 'upgrade',
+            program: resolved.program,
+            programData: u.address,
+            before: null,
+            after: now,
+            changed: { bytecode: true, authority: false, size: false },
+            detectedAt: Date.now(),
+            source: 'ws',
+          });
+          return;
+        }
+        if (before.fullAccountHash === now.fullAccountHash) return;
+        const kind = before.bytecodeHash !== now.bytecodeHash ? 'upgrade' : before.authority !== now.authority ? 'authority_change' : 'upgrade';
+        dispatcher.offer({
+          kind,
+          program: resolved.program,
+          programData: u.address,
+          before,
+          after: now,
+          changed: {
+            bytecode: before.bytecodeHash !== now.bytecodeHash,
+            authority: before.authority !== now.authority,
+            size: before.bytecodeLen !== now.bytecodeLen,
+          },
+          detectedAt: Date.now(),
+          source: 'ws',
+        });
+      });
+      feed.on('error', (e: Error) => process.stderr.write(`yellowstone: ${e.message}\n`));
+      feed.on('degraded', (d: unknown) => process.stderr.write(`DEGRADED ${JSON.stringify(d)}\n`));
+
+      await feed.start();
+      process.stderr.write(
+        `chain-wide feed active: ${opts.yellowstone}${opts.authority ? ` authority-filtered ${opts.authority}` : ''}; ` +
+          `per-event cap ${opts.perEventRpc} RPC, daily pool ${opts.dailyRpc}. Poll mode disabled.\n`,
+      );
+      const shutdown = () => {
+        feed.stop();
+        process.stderr.write(`feed stats ${JSON.stringify(feed.statsView())} unresolved=${unresolved} decoded=${decoded} dispatch ${JSON.stringify(dispatcher.stats())}\n`);
+        process.exit(0);
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+      return;
+    }
+
     const runFor = async (eventName: string, event?: UpgradeEvent) => {
       const perUpgrade = parseBudget(opts);
       const rules = new RuleBasedDecision({});
       const cfg = llmConfigFromEnv();
       const useReal = opts.mode === 'real' && cfg;
       const decision = useReal && cfg ? new RealLlmDecision(cfg, rules, perUpgrade) : rules;
+      const perEventClient = new SolanaClient({ transport: client.transport, budget: perUpgrade, commitment: opts.commitment as 'finalized' });
       const analysisScout = new Scout({
-        client: new SolanaClient({ transport: client.transport, budget: perUpgrade, commitment: opts.commitment as 'finalized' }),
+        client: perEventClient,
         budget: perUpgrade,
         decision,
         mode: useReal ? 'real' : 'rules',
         knownMultisigs: [...opts.multisig, ...(event ? (targets.find((t) => t.program === event.program)?.knownMultisigs ?? []) : [])],
         idlResolver: (p) => resolveIdl(p, { idl: opts.idl, priorIdl: opts.priorIdl, tryOnchain: opts.tryOnchainIdl }, daemonClient),
         prior,
+        maxDepth: Number(opts.depth),
+        ...(perUpgrade.limits.maxRpcCalls > 20 && opts.ingest !== 'signatures'
+          ? { batcher: new BlockBatcher(perEventClient, costModel, perUpgrade), ingest: opts.ingest as 'auto' | 'blocks' | 'signatures' }
+          : {}),
+        ...(secondary
+          ? {
+              resilient: {
+                quorum: (a: string) =>
+                  new ResilientClient([
+                    { client: perEventClient, url: opts.rpc ?? DEFAULT_RPC },
+                    {
+                      client: new SolanaClient({ transport: new HttpTransport(secondary), budget: new Budget({ ...perUpgrade.limits }), commitment: 'finalized' }),
+                      url: secondary,
+                    },
+                  ]).getAccountInfoQuorum(a),
+              },
+            }
+          : {}),
         ...(useReal && cfg
           ? {
               narrate: async (ctx: Parameters<typeof narrateIdlDiff>[3], graph: string, led: EvidenceLedger) =>
@@ -246,6 +493,47 @@ program
   });
 
 program
+  .command('calibrate')
+  .description('measure the block/transaction sizes your endpoint actually serves, and write a cost model Dot will trust')
+  .option('--rpc <url>', 'JSON-RPC endpoint (or DOT_RPC_URL)')
+  .option('--out <file>', 'where to write the calibration', 'dot-cost-model.json')
+  .option('--blocks <n>', 'how many produced blocks to sample', '3')
+  .option('--commitment <c>', 'processed | confirmed | finalized', 'finalized')
+  .action(async (opts: { rpc?: string; out: string; blocks: string; commitment: string }) => {
+    const url = opts.rpc ?? process.env.DOT_RPC_URL ?? DEFAULT_RPC;
+    const budget = new Budget({ maxRpcCalls: 60, maxSignatures: 60, maxLlmTokens: 0, maxWallMs: 180_000 });
+    const transport = new HttpTransport(url);
+    const client = new SolanaClient({ transport, budget, commitment: opts.commitment as 'finalized' });
+    const slot = await client.getSlot();
+    const blockCounts: number[] = [];
+    let sampledSlots = 0;
+    for (let probe = slot; probe > slot - 20 && blockCounts.length < Number(opts.blocks); probe--) {
+      const b = await client.getBlock(probe, { transactionDetails: 'signatures' }).catch(() => null);
+      if (!b) continue;
+      sampledSlots++;
+      blockCounts.push((b.signatures ?? []).length);
+    }
+    const avgTxnBytes = await measureTxnBytes(client);
+    if (blockCounts.length === 0) {
+      process.stderr.write('calibration FAILED: no produced block could be read. Nothing written; Dot will keep using labelled defaults.\n');
+      process.exitCode = 4;
+      return;
+    }
+    const avgBlockTransactions = Math.round(blockCounts.reduce((a, b) => a + b, 0) / blockCounts.length);
+    const model = {
+      avgBlockTransactions,
+      avgTxnBytes: avgTxnBytes ?? UNVERIFIED_DEFAULTS.avgTxnBytes,
+      maxBlockBytes: 32_000_000,
+      densityFloor: UNVERIFIED_DEFAULTS.densityFloor,
+      source: opts.out,
+      measuredAt: Date.now(),
+      note: `avgTxnBytes ${avgTxnBytes === null ? 'NOT MEASURED (kept default)' : 'measured'}; blocks sampled ${blockCounts.length}/${sampledSlots} at ${new URL(url).host}`,
+    };
+    await writeFile(opts.out, JSON.stringify(model, null, 2));
+    process.stdout.write(`${JSON.stringify(model, null, 2)}\nwrote ${opts.out}\n`);
+  });
+
+program
   .command('limits')
   .description('print what Dot cannot see, as data')
   .action(() => {
@@ -264,6 +552,20 @@ program
     const { startMcpServer } = await import('../mcp/server.js');
     await startMcpServer({ ...(opts.rpc ? { rpc: opts.rpc } : {}), mode: opts.mode });
   });
+
+async function measureTxnBytes(client: SolanaClient): Promise<number | null> {
+  const sigs = await client
+    .getSignaturesForAddress('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', { limit: 8 })
+    .catch(() => []);
+  const sizes: number[] = [];
+  for (const sig of sigs.slice(0, 8)) {
+    client.resetByteCounter();
+    const res = await client.getTransaction(sig.signature);
+    if (res.status === 'found') sizes.push(client.statsView().bytes);
+  }
+  if (sizes.length === 0) return null;
+  return Math.round(sizes.reduce((a, b) => a + b, 0) / sizes.length);
+}
 
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];

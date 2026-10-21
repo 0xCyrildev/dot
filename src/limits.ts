@@ -13,7 +13,12 @@ export type LimitCode =
   | 'NO_PRE_DEPLOY_ANALYSIS'
   | 'FINALITY_VS_LATENCY'
   | 'SINGLE_NODE_TRUST'
-  | 'NO_MALICE_DETECTION';
+  | 'NO_MALICE_DETECTION'
+  | 'BLOCK_FETCH_AMPLIFICATION'
+  | 'ENDPOINT_CORROBORATION'
+  | 'PROGRAMDATA_REVERSE_LOOKUP'
+  | 'FEED_BACKPRESSURE'
+  | 'GRPC_LIVE_PATH_UNVERIFIED';
 
 export type LimitNote = {
   code: LimitCode;
@@ -42,8 +47,53 @@ export const LIMIT_NOTES: LimitNote[] = [
     blind:
       'There is no `getProgramChanges` and `subscribe*` is per-account. Watching the whole upgradeable loader means polling `getProgramAccounts` on a program that owns >100k accounts, which providers gate, rate-limit or reject outright.',
     mitigation:
-      'Watch an explicit target list with `accountSubscribe`/`getAccountInfo` (what Dot does by default). For chain-wide coverage you need Yellowstone gRPC (Geyser) with an `owner = BPFLoaderUpgradeable` account subscription, or a provider-side transaction webhook filtered on the loader id. Dot keeps the transport behind `RpcTransport` so a gRPC feed can be dropped in without touching the analyzer.',
+      'Dot ships both layers: `watch --targets` polls a named list over JSON-RPC, and `watch --yellowstone <url>` subscribes by owner over Geyser and sees every `ProgramData` write on the cluster. The gRPC feed costs zero JSON-RPC calls, which is what makes chain-wide detection budget-feasible at all.',
     always: true,
+  },
+  {
+    code: 'GRPC_LIVE_PATH_UNVERIFIED',
+    title: 'The Geyser path is typechecked and unit-tested, but was not run against a live endpoint',
+    blind:
+      'The subscription request, the account-update decoding and the classification logic in `src/rpc/yellowstone.ts` were written against the generated types of `@triton-one/yellowstone-grpc` 9.0.1 and exercised with an injected fake stream. No Geyser endpoint was reachable in the session that built it, so handshake, auth-token handling and replay semantics are unverified in the field. Two of its field shapes already contradict the usual write-ups (owner/account are base58 strings, not bytes; lamports/writeVersion are decimal strings), which is what to expect of a layer nobody has poked at.',
+    mitigation:
+      'Run `dot watch --yellowstone <url>` against a real endpoint and check `feed.statsView()`: `updates` should rise, `startupSkipped` should be non-zero on a replay, `layoutMismatch` should stay near zero. Treat a flat `updates` counter with no error as the signature of a filter that matches nothing, not as an idle chain.',
+    always: false,
+  },
+  {
+    code: 'PROGRAMDATA_REVERSE_LOOKUP',
+    title: 'A ProgramData write does not say which program it is',
+    blind:
+      'Geyser reports the account address; `find_program_address` is one-way, and nothing on chain stores the reverse pointer. On a fresh daemon most `ProgramData` accounts therefore arrive nameless, and a nameless upgrade cannot be put in a graph.',
+    mitigation:
+      '`ProgramIndex` resolves it three ways, cheapest first, and stamps the method on the answer: pointer accounts the feed already saw (free), the writing transaction plus local PDA re-derivation (one call, exact), or a reverse `getProgramAccounts` scan (heavy, commonly gated). Events that resolve to none are **counted and skipped** (`unresolved`), never guessed and never silently dropped.',
+    always: false,
+  },
+  {
+    code: 'BLOCK_FETCH_AMPLIFICATION',
+    title: 'Block batching buys calls with bandwidth, not with cost',
+    blind:
+      'One `getBlock` replaces many `getTransaction` calls, so the RPC-call ceiling stops binding — and the payload becomes every transaction in the slot, most of them unrelated to the target. On a busy program the byte count goes up by two or three orders of magnitude while the call count drops by one. A tool that reports only the first number is recommending the more expensive option.',
+    mitigation:
+      'Dot plans against an explicit cost model, prints both sides of the trade in the report (`callSavingRatio`, `byteAmplification`), and refuses a block above `maxBlockBytes`. Run `dot calibrate --rpc <url>` to replace the labelled defaults with sizes your endpoint actually serves; until then the rationale string says `defaults_unverified`.',
+    always: false,
+  },
+  {
+    code: 'ENDPOINT_CORROBORATION',
+    title: 'Corroboration is only meaningful at the same slot',
+    blind:
+      'Two endpoints holding different bytes for one account at different slots are describing chain progress, not contradicting each other. And when one endpoint is down, the surviving number is uncorroborated rather than wrong.',
+    mitigation:
+      '`ResilientClient` compares only same-slot reads and splits the outcomes: `agreed`, `disagreed` (halt, P0 with `tierSource: integrity`), `slot_mismatch` (inconclusive, continue), `single_source` (continue, labelled), `both_failed` (halt, no conclusion). Every report carries the verdict, not just the ones that halted.',
+    always: false,
+  },
+  {
+    code: 'FEED_BACKPRESSURE',
+    title: 'A deploy storm drops analyses, with a count',
+    blind:
+      'When the chain-wide feed fires faster than the daily RPC pool allows, events are dropped. Dropped is not the same as clean, and a daemon that dropped forty upgrades looks identical to one that saw none.',
+    mitigation:
+      '`UpgradeDispatcher` caps each investigation at `--per-event-rpc` (default 50) and the daemon at `--daily-rpc`, serves authority handovers and vanished ProgramData ahead of routine bytecode writes, drains serially so a burst cannot turn into a thundering herd, and exposes `dropped: {queue_full, daily_pool, below_minimum}`. Below `minViable` calls an analysis is refused rather than run thin.',
+    always: false,
   },
   {
     code: 'CPI_DEPTH_ATTRIBUTION',
@@ -130,9 +180,9 @@ export const LIMIT_NOTES: LimitNote[] = [
     code: 'NO_PRE_DEPLOY_ANALYSIS',
     title: 'Dot sees landings, not intentions',
     blind:
-      'An upgrade that has not been written to the ProgramData account does not exist for Dot. No propose-stage, no buffer-stage review, no source. This is a runtime blast-radius tool and is deliberately not a static analyzer of the bytecode about to be deployed.',
+      'A bytecode change that has not been written on chain does not exist for Dot: no propose-stage review, no repository, no CI signal. It is a runtime tool, deliberately not a static analyzer of what is about to be deployed.',
     mitigation:
-      'Pair with a static analyzer on the Buffer account (`BPFLoaderUpgradeable` buffer stage) before `deploy`/`upgrade`; Dot’s `accountSubscribe` on the buffer PDA would be the natural trigger, and is not implemented in v0.1.',
+      'Partly narrowed: the Geyser owner filter also catches the loader’s `Buffer` accounts, so `dot watch --yellowstone` prints a `STAGED` line when a program is being uploaded before it lands — an early trigger, not an analysis. Pair it with a static analyzer on the staged bytes.',
     always: true,
   },
   {
@@ -150,7 +200,7 @@ export const LIMIT_NOTES: LimitNote[] = [
     blind:
       'A provider can cache, filter, lag, or serve you a node that is behind. Every number in a Dot report is a statement about what one endpoint chose to return. A quiet blast radius can mean a filtered node.',
     mitigation:
-      'Run against two endpoints and diff the reports — Dot’s evidence ledger makes that diff mechanical. `rpc.rpcErrorCodes` and `pruned` counts are the first places to look.',
+      '`--secondary-rpc <url>` reads the `ProgramData` account from both endpoints and halts on a same-slot contradiction; each endpoint gets its own `Budget` so a retry on one cannot silently spend the other’s. `rpc.rpcErrorCodes` and `pruned` remain the first places to look.',
     always: true,
   },
   {

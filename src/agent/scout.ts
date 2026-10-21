@@ -8,6 +8,8 @@ import { GraphBuilder, dependentsByDepth, directDependents, type Graph } from '.
 import { analyzeTrace } from '../graph/normalize.js';
 import { resolveAccountKeys } from '../graph/keys.js';
 import type { SolanaClient } from '../rpc/client.js';
+import type { WireSignatureInfo } from '../rpc/wire.js';
+import type { BlockBatcher, IngestSummary } from '../graph/batcher.js';
 import { classifyAuthority, deriveProgramData, decodeProgramData } from '../state/programdata.js';
 import { BudgetExhaustedError, DotError, describeError, isDotError } from '../errors.js';
 import { scoreRisk, type ExposureSignals, type EvidenceSignals } from '../score/risk.js';
@@ -30,6 +32,22 @@ export type ActResult = {
   spanDays: number | null;
   budgetLimited: boolean;
   duplicates: number;
+  ingest: IngestRecord;
+};
+
+/**
+ * How the traces were paid for. Reported because "10x fewer RPC calls" and
+ * "40x more bytes" are the same change, and a reader is entitled to both numbers
+ * next to the strategy that produced them.
+ */
+export type IngestRecord = {
+  strategy: 'per_block' | 'per_signature';
+  rationale: string;
+  groups: number;
+  est?: { callsPerSignature: number; callsPerBlock: number; bytesPerSignature: number; bytesPerBlock: number };
+  callSavingRatio?: number;
+  byteAmplification?: number;
+  summary?: IngestSummary;
 };
 
 export type ScoutOptions = {
@@ -41,6 +59,12 @@ export type ScoutOptions = {
   narrate?: (ctx: UpgradeContext, graph: string, ledger: EvidenceLedger) => Promise<DotReport['narrative']>;
   idlResolver?: (program: string) => Promise<{ available: boolean; source?: string; diffText?: string }>;
   prior?: Map<string, PriorDigest>;
+  /** Batched block ingestion. Omit it and Dot stays on per-signature reads. */
+  batcher?: BlockBatcher;
+  ingest?: 'auto' | 'blocks' | 'signatures';
+  batchOpts?: { includeLogs?: boolean; maxBlocks?: number };
+  /** Multi-endpoint corroboration for the read that decides whether an upgrade happened. */
+  resilient?: { quorum: (address: string) => Promise<import('../rpc/resilient.js').QuorumRead> };
   knownMultisigs?: string[];
   /** Max transitive depth reported; deep graphs are mostly re-exports of the same DEX. */
   maxDepth?: number;
@@ -62,6 +86,13 @@ export class Scout {
   private readonly trace: StageTrace[] = [];
   private readonly o: Required<Pick<ScoutOptions, 'maxDepth'>> & ScoutOptions;
   private stoppedAt: DotReport['stoppedAt'] = 'report';
+  /**
+   * Set when two endpoints contradicted each other. It is not a risk score and it
+   * is not missing data: it is the tool's own input failing, which outranks every
+   * finding it could have produced.
+   */
+  private integrityHalt: { agreement: string; reason: string; endpoints: unknown[] } | null = null;
+  private lastQuorum: import('../rpc/resilient.js').QuorumRead | null = null;
 
   constructor(opts: ScoutOptions) {
     this.o = { maxDepth: 3, ...opts };
@@ -80,6 +111,14 @@ export class Scout {
     const t0 = Date.now();
     const ctx = await this.perceive(req);
     if (!ctx) {
+      if (this.integrityHalt) {
+        // Deliberately not routed through scoreRisk: a disagreement between two
+        // endpoints is not evidence about the program, it is evidence about the
+        // tool's inputs. The tier is an escalation of *attention*, and `tierSource`
+        // says so, so nobody files an incident against a program because a node lied.
+        this.o.budget.stop('endpoint disagreement');
+        return this.integrityReport(req.program, req.label, t0);
+      }
       return this.report(req.program, req.label, null, null, null, t0, 'perceive', 'ProgramData could not be read or decoded');
     }
 
@@ -129,8 +168,25 @@ export class Scout {
     const programData = deriveProgramData(req.program);
     const knownMultisigs = new Set([...(req.event ? [] : []), ...(this.o.knownMultisigs ?? [])]);
     let state: ReturnType<typeof decodeProgramData> | null = null;
+    let acct: Awaited<ReturnType<SolanaClient['getAccountInfo']>> = null;
     try {
-      const acct = await this.o.client.getAccountInfo(programData);
+      if (this.o.resilient) {
+        const q = await this.o.resilient.quorum(programData);
+        this.lastQuorum = q;
+        if (q.halt) {
+          if (q.agreement === 'disagreed') {
+            this.integrityHalt = { agreement: q.agreement, reason: q.reason, endpoints: q.endpoints };
+            this.mark('perceive', `INTEGRITY HALT: ${q.reason}`);
+            return null;
+          }
+          this.ledger.add({ kind: 'limit', summary: `endpoint corroboration: ${q.agreement} — ${q.reason}` });
+        } else if (q.agreement !== 'not_checked') {
+          this.ledger.add({ kind: 'limit', summary: `endpoint corroboration ${q.agreement}: ${q.reason}` });
+        }
+        acct = q.account;
+      } else {
+        acct = await this.o.client.getAccountInfo(programData);
+      }
       if (!acct) {
         this.ledger.add({ kind: 'upgrade', summary: `ProgramData ${programData} has no account data (closed or never existed)`, ref: { program: req.program } });
         if (req.event?.kind !== 'program_data_closed') {
@@ -201,66 +257,114 @@ export class Scout {
    * fold, which is why that step has to be right.
    */
   private async act(program: string, decision: Decision): Promise<ActResult> {
-    const builder = new GraphBuilder(program);
     const budget = this.o.budget;
-    let planned = decision.plan.signatures;
-    let cursor: string | undefined = undefined;
-    let found = 0;
-    let pruned = 0;
-    let errors = 0;
+    const planned = decision.plan.signatures;
     let stoppedReason: string | null = null;
-    /**
-     * A cursor walk can be handed overlapping windows by a provider that ignores
-     * or mis-honours `until`. Re-reading a signature would double-count its edges
-     * and quietly inflate the blast radius, so duplicates are dropped and counted.
-     */
-    const seenSignatures = new Set<string>();
-    let duplicates = 0;
     let budgetLimited = false;
-    let oldestBlockTime: number | null = null;
-    let newestBlockTime: number | null = null;
 
-    this.mark('act', `planned sample ${planned} signatures`);
-
-    while (found + pruned + errors < planned) {
-      const want = Math.min(50, planned - found - pruned - errors);
-      let sigs: Awaited<ReturnType<SolanaClient['getSignaturesForAddress']>>;
+    // ---- Phase 1: find the traces. `getSignaturesForAddress` returns the slot
+    // alongside each signature, which is what makes block batching possible without
+    // an extra call, and it means "which transactions touched this id" — never "from
+    // whom". The caller comes only from the inner-instruction fold in phase 3.
+    const collected: WireSignatureInfo[] = [];
+    const seen = new Set<string>();
+    let duplicates = 0;
+    let cursor: string | undefined;
+    while (collected.length < planned) {
+      const before = collected.length;
+      const batch = Math.min(250, planned - collected.length);
+      if (budget.affordableSignatures(batch) < 1) {
+        stoppedReason = `budget refuses a signature pull (rpcCalls ${budget.snapshot().spent.rpcCalls}/${budget.limits.maxRpcCalls})`;
+        budgetLimited = true;
+        break;
+      }
+      let sigs: WireSignatureInfo[];
       try {
-        const affordable = budget.affordableSignatures(1);
-        if (affordable < 1) {
-          stoppedReason = `budget refuses any further signature pull (rpcCalls ${budget.snapshot().spent.rpcCalls}/${budget.limits.maxRpcCalls})`;
-          budgetLimited = true;
-          break;
-        }
         sigs = await this.o.client.getSignaturesForAddress(program, {
-          limit: Math.min(want, affordable),
+          limit: batch,
           ...(cursor ? { until: cursor } : {}),
         });
       } catch (e) {
         if (e instanceof BudgetExhaustedError) {
           stoppedReason = `budget exhausted during signature walk: ${e.kind}`;
           budgetLimited = true;
-          break;
+        } else {
+          stoppedReason = `signature walk failed: ${(e as Error).message}`;
+          this.ledger.add({ kind: 'limit', summary: stoppedReason, ref: { program } });
         }
-        stoppedReason = `signature walk failed: ${(e as Error).message}`;
-        this.ledger.add({ kind: 'limit', summary: stoppedReason, ref: { program } });
         break;
       }
       if (sigs.length === 0) {
         stoppedReason = 'the node returned no older signatures: Dot has reached the end of available history';
         break;
       }
-
-      for (const s of sigs) {
-        if (found + pruned + errors >= planned) {
-          stoppedReason = 'planned sample size reached';
-          break;
-        }
-        if (seenSignatures.has(s.signature)) {
+      for (const sig of sigs) {
+        if (seen.has(sig.signature)) {
           duplicates++;
           continue;
         }
-        seenSignatures.add(s.signature);
+        seen.add(sig.signature);
+        collected.push(sig);
+        if (collected.length >= planned) break;
+      }
+      cursor = sigs[sigs.length - 1]?.signature;
+      if (!cursor) break;
+      // A provider that ignores `until`, or a window that is entirely duplicates,
+      // would otherwise spin here spending one paid call per loop while collecting
+      // nothing. No new work in a full window is the stop condition.
+      if (collected.length === before) {
+        stoppedReason = 'the signature cursor made no progress: the provider returned an overlapping window, so Dot stopped paying for it';
+        this.ledger.add({ kind: 'limit', summary: stoppedReason, ref: { program } });
+        break;
+      }
+    }
+    if (duplicates > 0) {
+      this.ledger.add({
+        kind: 'limit',
+        summary: `${duplicates} duplicate signature(s) from the cursor walk dropped before they could double-count edges`,
+        ref: { program },
+      });
+    }
+
+    const builder = new GraphBuilder(program);
+    let found = 0;
+    let pruned = 0;
+    let errors = 0;
+    let oldestBlockTime: number | null = null;
+    let newestBlockTime: number | null = null;
+    let ingest: ActResult['ingest'] = { strategy: 'per_signature', rationale: 'no cost model supplied', groups: collected.length };
+
+    // ---- Phase 2: choose how to pay for them.
+    let chosen: 'per_block' | 'per_signature' = 'per_signature';
+    if (this.o.batcher && this.o.ingest !== 'signatures') {
+      const plan = this.o.batcher.plan(this.o.batcher.groupBySlot(collected));
+      chosen = this.o.ingest === 'blocks' ? 'per_block' : plan.chosen;
+      ingest = {
+        strategy: chosen,
+        rationale: plan.rationale,
+        groups: plan.distinctBlocks,
+        est: plan.est,
+        callSavingRatio: plan.callSavingRatio,
+        byteAmplification: plan.byteAmplification,
+      };
+      this.ledger.add({ kind: 'trace', summary: `ingestion plan: ${plan.rationale}`, ref: { program } });
+    }
+
+    // ---- Phase 3: read.
+    if (chosen === 'per_block' && this.o.batcher) {
+      const groups = this.o.batcher.groupBySlot(collected);
+      const sum = await this.o.batcher.ingest(program, groups, builder, this.o.batchOpts ?? {});
+      this.o.client.resetByteCounter();
+      found = sum.transactionsRelevant;
+      pruned = sum.blocksNull;
+      errors = sum.errors;
+      ingest.summary = sum;
+      if (sum.stoppedReason) {
+        stoppedReason = sum.stoppedReason;
+        budgetLimited = /budget/.test(sum.stoppedReason);
+      }
+    } else {
+      for (const sig of collected) {
         try {
           budget.spendSignatures(1);
         } catch (e) {
@@ -273,11 +377,8 @@ export class Scout {
         }
         let res;
         try {
-          res = await this.o.client.getTransaction(s.signature);
+          res = await this.o.client.getTransaction(sig.signature);
         } catch (e) {
-          // A budget stop here must degrade into a partial graph with a stated
-          // reason, not into a crashed run: the analysis that got 40% of the way
-          // through a sample is still the most useful thing Dot can say tonight.
           if (e instanceof BudgetExhaustedError) {
             stoppedReason = `budget exhausted mid-trace: ${e.kind} at ${found} trace(s)`;
             budgetLimited = true;
@@ -291,13 +392,13 @@ export class Scout {
         }
         if (res.status === 'error') {
           errors++;
-          this.ledger.add({ kind: 'limit', summary: `getTransaction failed: ${JSON.stringify(res.error)}`, ref: { signature: s.signature } });
+          this.ledger.add({ kind: 'limit', summary: `getTransaction failed: ${JSON.stringify(res.error)}`, ref: { signature: sig.signature } });
           continue;
         }
         const tx = res.tx;
         const resolution = resolveAccountKeys(tx);
         const analysis = analyzeTrace(tx, resolution);
-        builder.addTrace(s.signature, tx, analysis);
+        builder.addTrace(sig.signature, tx, analysis);
         found++;
         if (tx.blockTime !== null && tx.blockTime !== undefined) {
           oldestBlockTime = oldestBlockTime === null ? tx.blockTime : Math.min(oldestBlockTime, tx.blockTime);
@@ -307,38 +408,36 @@ export class Scout {
           this.ledger.add({
             kind: 'trace',
             summary: `trace ${found}: slot=${tx.slot} version=${String(tx.version)} outer=${tx.transaction.message.instructions.length} innerGroups=${tx.meta?.innerInstructions?.length ?? 0} attribution=${analysis.quality} keys=${resolution.method}`,
-            ref: { signature: s.signature, slot: tx.slot },
+            ref: { signature: sig.signature, slot: tx.slot },
           });
         }
       }
-      if (stoppedReason) break;
-      cursor = sigs[sigs.length - 1]?.signature;
-      if (!cursor) break;
+      ingest.strategy = 'per_signature';
     }
 
     const graph = builder.finalize();
-    this.mark('act', `traces=${found} pruned=${pruned} errors=${errors} edges=${graph.detailedEdges.length} quality=${graph.attributionQuality}${stoppedReason ? ` stopped: ${stoppedReason}` : ''}`);
+    this.mark('act', `strategy=${ingest.strategy} traces=${found} pruned=${pruned} errors=${errors} edges=${graph.detailedEdges.length} quality=${graph.attributionQuality}${stoppedReason ? ` stopped: ${stoppedReason}` : ''}`);
     if (pruned > 0) {
       this.ledger.add({
         kind: 'limit',
-        summary: `${pruned} of ${found + pruned} sampled signatures were unavailable from the node (pruned history or retention window). The graph is built from what was retrievable, not from what happened.`,
+        summary:
+          ingest.strategy === 'per_block'
+            ? `${pruned} of ${groups_count(collected)} requested block(s) came back null: skipped slots and pruned history are indistinguishable from the response alone`
+            : `${pruned} of ${found + pruned} sampled signatures were unavailable from the node (pruned history or retention window). The graph is built from what was retrievable, not from what happened.`,
         ref: { program },
       });
     }
     if (graph.attributionQuality === 'flat') {
       this.ledger.add({
         kind: 'limit',
-        summary: `${graph.flattenedFrames} nested CPI(s) had no stackHeight and no usable logs; attributed to the outer instruction. Dependent counts are an upper bound.`,
+        summary: `${graph.flattenedFrames} nested CPI(s) had neither stackHeight nor usable logs; attributed to the outer instruction. Dependent counts are an upper bound.`,
         ref: { program },
       });
     }
     for (const a of graph.anomalies) this.ledger.add({ kind: 'limit', summary: a, ref: { program } });
 
-    if (duplicates > 0) {
-      this.ledger.add({ kind: 'limit', summary: `${duplicates} duplicate signature(s) returned by the cursor walk were dropped before they could double-count edges`, ref: { program } });
-    }
     const spanDays = oldestBlockTime !== null && newestBlockTime !== null ? (newestBlockTime - oldestBlockTime) / 86_400 : null;
-    return { graph, planned, found, pruned, fetchErrors: errors, stoppedReason, spanDays, budgetLimited, duplicates };
+    return { graph, planned, found, pruned, fetchErrors: errors, stoppedReason, spanDays, budgetLimited, duplicates, ingest };
   }
 
   /** EVALUATE. Digest the graph into exposure, then price it against evidence quality. */
@@ -405,6 +504,49 @@ export class Scout {
     return this.o.narrate(ctx, summary, this.ledger);
   }
 
+  private integrityReport(program: string, label: string | undefined, t0: number): DotReport {
+    const halt = this.integrityHalt!;
+    this.ledger.add({ kind: 'limit', summary: `ENDPOINT DISAGREEMENT: ${halt.reason}`, ref: { program } });
+    return {
+      schema: 'dot.report.v1',
+      generatedAt: new Date().toISOString(),
+      program,
+      ...(label ? { label } : {}),
+      mode: this.o.mode,
+      programData: deriveProgramData(program),
+      event: 'upgrade',
+      tier: 'P0',
+      tierSource: 'integrity',
+      score: 0,
+      confidence: 'low',
+      components: [
+        {
+          name: 'endpoint_disagreement',
+          points: 0,
+          max: 0,
+          why: halt.reason,
+        },
+      ],
+      cappedBy: 'halted: two endpoints contradict each other about the same account at the same slot',
+      stoppedAt: 'perceive',
+      stopNote: 'endpoint disagreement',
+      decision: null,
+      blastRadius: null,
+      graph: null,
+      evidence: this.ledger.all(),
+      integrity: { agreement: halt.agreement, reason: halt.reason, endpoints: halt.endpoints },
+      limits: limitsFor({
+        pruned: 0,
+        attributionQuality: 'stackHeight',
+        idlAvailable: false,
+        logTruncated: false,
+      }),
+      budget: this.o.budget.snapshot(),
+      rpc: this.o.client.statsView(),
+      wallMs: Date.now() - t0,
+    };
+  }
+
   private report(
     program: string,
     label: string | undefined,
@@ -432,6 +574,7 @@ export class Scout {
       programData: ctx?.programData ?? deriveProgramData(program),
       event: ctx?.kind ?? 'upgrade',
       tier: built?.risk.tier ?? 'P3',
+      tierSource: 'exposure',
       score: built?.risk.score ?? 0,
       confidence: built?.risk.confidence ?? 'low',
       components: built?.risk.components ?? [],
@@ -461,6 +604,19 @@ export class Scout {
         : null,
       graph: built?.graph ?? null,
       evidence: evidenceList,
+      // Corroboration is reported whether or not it halted: "one endpoint's word"
+      // is a property of every number below it, and hiding it unless it became an
+      // emergency is how a tool trains its users to trust it too much.
+      ...(this.lastQuorum
+        ? {
+            integrity: {
+              agreement: this.lastQuorum.agreement,
+              reason: this.lastQuorum.reason,
+              endpoints: this.lastQuorum.endpoints,
+            },
+          }
+        : {}),
+      ...(built?.ingest ? { ingest: built.ingest } : {}),
       limits,
       ...(narrative ? { narrative } : {}),
       budget: this.o.budget.snapshot(),
@@ -476,3 +632,7 @@ export function isBudgetStop(e: unknown): boolean {
 
 export type { WatchTarget };
 export { DotError };
+
+function groups_count(sigs: Array<{ slot: number }>): number {
+  return new Set(sigs.map((x) => x.slot)).size;
+}

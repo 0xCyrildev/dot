@@ -138,6 +138,30 @@ export type WireGetTransactionResult = {
   transaction: { message: WireMessage; signatures: string[] };
 };
 
+/**
+ * `getBlock` at `encoding: "jsonParsed"`. Each entry is close to, but not the
+ * same as, a `getTransaction` result: `version` is optional and `transactionIndex`
+ * is absent, so an adapter is required rather than a cast.
+ */
+export type WireBlockTransaction = {
+  slot?: number | null;
+  transaction: { message: WireMessage; signatures: string[] };
+  meta: WireTransactionMeta | null;
+  blockTime?: number | null;
+  version?: 'legacy' | number | null;
+};
+
+export type WireBlock = {
+  blockhash: string;
+  previousBlockhash: string;
+  parentSlot: number;
+  slot?: number;
+  blockTime?: number | null;
+  blockHeight?: number | null;
+  transactions?: WireBlockTransaction[];
+  signatures?: string[];
+};
+
 export type WireSignatureInfo = {
   signature: string;
   slot: number;
