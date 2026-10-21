@@ -26,6 +26,8 @@ import { renderReplay, replayTransaction } from '../commands/replay.js';
 import { resolveIdl } from '../idl.js';
 import { loadSeedFile, renderHoldings, sumHoldings } from '../state/seeds.js';
 import { formatEscalation, renderMarkdown, type DotReport } from '../report.js';
+import { loadHypothesisFile, renderHypothesis } from '../agent/hypothesis.js';
+import type { Hypothesis } from '../agent/hypothesis.js';
 import { BlastRadiusScanner, renderBlastRadius, loadProgramList, loadAuthorityMap } from '../commands/blastRadius.js';
 import { LIMIT_NOTES } from '../limits.js';
 import { LIMIT_STATUS, auditCoverage, countStates, renderLimitStatus, verifyTestClaims, type LimitState } from '../commands/limits.js';
@@ -93,7 +95,7 @@ function parseBudget(o: GlobalOpts): Budget {
   });
 }
 
-type BuildExtras = Partial<Pick<import('../agent/scout.js').ScoutOptions, 'bytecode' | 'recordBytecode'>>;
+type BuildExtras = Partial<Pick<import('../agent/scout.js').ScoutOptions, 'bytecode' | 'recordBytecode' | 'carryHypothesis'>>;
 
 async function readIdlPair(now?: string, prior?: string): Promise<{ now: unknown | null; prior: unknown | null }> {
   const load = async (p?: string) => {
@@ -158,6 +160,7 @@ async function build(o: GlobalOpts & BuildExtras) {
     maxDepth: Number(o.depth),
     ...(o.bytecode ? { bytecode: o.bytecode } : {}),
     ...(o.recordBytecode ? { recordBytecode: o.recordBytecode } : {}),
+    ...(o.carryHypothesis ? { carryHypothesis: o.carryHypothesis } : {}),
     idlResolver: (p) => resolveIdl(p, { idl: o.idl, priorIdl: o.priorIdl, tryOnchain: o.tryOnchainIdl }, client),
     ...(o.secondaryRpc ? { resilient: { quorum: (a: string) => quorum.getAccountInfoQuorum(a) } } : {}),
     ...(batcher ? { batcher, ingest: o.ingest as 'auto' | 'blocks' | 'signatures' } : {}),
@@ -194,16 +197,38 @@ program
   .option('--seeds <file>', 'JSON list of {program_id, seed_template, account_type} to sum custody from derived PDAs')
   .option('--bytecode-vault <dir>', 'directory where Dot keeps images it has seen, to diff against on the next upgrade')
   .option('--prior-bytecode <file>', 'explicit prior image, when the vault has none')
+  .option('--hypothesis-file <file>', 'a hypothesis JSON from an earlier under-budgeted run; it gets re-tested this time')
+  .option('--hypothesis-out <file>', 'write the escalation hypothesis here for a later run to test')
   .option('--label <label>', 'human name for reports')
   .option('--format <fmt>', 'json | md | both', 'both')
   .option('--out <dir>', 'write report files into this directory instead of stdout')
-  .action(async (programId: string, opts: GlobalOpts & { label?: string; forceFullTrace?: boolean; seeds?: string; priorBytecode?: string }) => {
+  .action(async (programId: string, opts: GlobalOpts & { label?: string; forceFullTrace?: boolean; seeds?: string; priorBytecode?: string; hypothesisFile?: string; hypothesisOut?: string }) => {
     if (!isWellFormedPubkey(programId)) {
       process.stderr.write(`error: ${programId} is not a 32-byte base58 address\n`);
       process.exitCode = 2;
       return;
     }
-    const { client, scout, budget } = await build(opts);
+    // A carried claim is input from an earlier run, so it is validated here rather than
+    // trusted downstream: a half-written hypothesis would otherwise produce a verdict
+    // against a falsifier nobody recorded.
+    let carry: Hypothesis | null = null;
+    if (opts.hypothesisFile) {
+      try {
+        carry = await loadHypothesisFile(opts.hypothesisFile);
+      } catch (e) {
+        if (isDotError(e)) {
+          process.stderr.write(`error: ${e.message}\n`);
+          process.stderr.write(`detail: ${JSON.stringify(e.details)}\n`);
+          process.exitCode = 2;
+          return;
+        }
+        throw e;
+      }
+      if (carry.outcome) {
+        process.stderr.write(`note: the carried claim already carries a verdict (${carry.outcome.status} at ${carry.outcome.at}); this run re-tests it and the newer verdict replaces it.\n`);
+      }
+    }
+    const { client, scout, budget } = await build({ ...opts, ...(carry ? { carryHypothesis: carry } : {}) });
     let report: DotReport;
     try {
       report = await scout.run({
@@ -233,7 +258,19 @@ program
       // reached") and 1 ("it broke"). A wrapper script can branch on it and a human
       // reading the terminal gets the number to raise.
       process.stderr.write(`${escalation}\n`);
+      if (report.hypothesis) {
+        process.stderr.write(`${renderHypothesis(report.hypothesis, '  ')}\n`);
+        if (opts.hypothesisOut) {
+          await writeFile(opts.hypothesisOut, JSON.stringify({ program: report.program, ...report.hypothesis }, null, 2));
+          process.stderr.write(`  hypothesis written to ${opts.hypothesisOut}; re-run with --budget-rpc +N --hypothesis-file ${opts.hypothesisOut} to test it.\n`);
+        }
+      }
       process.exitCode = 4;
+    } else if (report.hypothesis?.outcome) {
+      // A funded run owes the reader the answer to the question the cheap run asked,
+      // even when this one needed no extra budget.
+      const o = report.hypothesis.outcome;
+      process.stdout.write(`carried claim [${o.subject?.claimKind ?? report.hypothesis.claimKind}] re-tested: ${o.status} — ${o.against}\n`);
     }
   });
 

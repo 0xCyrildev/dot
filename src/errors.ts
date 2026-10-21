@@ -13,6 +13,7 @@ export type DotErrorCode =
   | 'NOT_UPGRADEABLE'
   | 'UNKNOWN_PROGRAMDATA_LAYOUT'
   | 'LLM_UNAVAILABLE'
+  | 'BAD_HYPOTHESIS_FILE'
   | 'INVALID_PUBKEY';
 
 export class DotError extends Error {

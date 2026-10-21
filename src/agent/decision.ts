@@ -1,5 +1,6 @@
 import type { AuthorityPosture } from '../state/programdata.js';
 import type { EvidenceLedger } from './evidence.js';
+import type { Hypothesis } from './hypothesis.js';
 
 /** Anything the Decide step is allowed to look at before spending on a trace pull. */
 export type UpgradeContext = {
@@ -73,7 +74,14 @@ export type Decision = {
    * an agent says what it could not confirm and how much it would need.
    */
   escalation?:
-    | { kind: 'needs_more_budget'; requestedRpcCalls: number; reason: string; whatItWouldConfirm: string }
+    | {
+        kind: 'needs_more_budget';
+        requestedRpcCalls: number;
+        reason: string;
+        whatItWouldConfirm: string;
+        /** Attached by the Scout once it knows what the run actually observed. */
+        hypothesis?: Hypothesis;
+      }
     | { kind: 'widen_to_authority'; reason: string };
   llmTokensUsed: number;
   /** Populated when an LLM decision was refused for a structural reason. */

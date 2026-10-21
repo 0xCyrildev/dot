@@ -13,6 +13,7 @@ import { diffBytecode, renderBytecodeDiff, type BytecodeDiff } from '../state/by
 import type { BlockBatcher, IngestSummary } from '../graph/batcher.js';
 import { classifyAuthority, deriveProgramData, decodeProgramData } from '../state/programdata.js';
 import { BudgetExhaustedError, DotError, describeError, isDotError } from '../errors.js';
+import { buildHypothesis, judgeHypothesis, type Hypothesis, type ReTestObservation } from './hypothesis.js';
 import { scoreRisk, type ExposureSignals, type EvidenceSignals } from '../score/risk.js';
 import type { UpgradeEvent, WatchTarget } from '../watcher/watcher.js';
 
@@ -87,6 +88,12 @@ export type ScoutOptions = {
   ) => Promise<DotReport['narrative']>;
   idlResolver?: (program: string) => Promise<{ available: boolean; source?: string; diffText?: string }>;
   prior?: Map<string, PriorDigest>;
+  /**
+   * A hypothesis from an earlier, under-funded run. When this run can finally afford
+   * the plan it is re-tested and marked confirmed/denied, so the record shows whether
+   * the suspicion was worth the calls it asked for.
+   */
+  carryHypothesis?: Hypothesis | null;
   /** Batched block ingestion. Omit it and Dot stays on per-signature reads. */
   batcher?: BlockBatcher;
   ingest?: 'auto' | 'blocks' | 'signatures';
@@ -138,7 +145,10 @@ export class Scout {
   private bytecodeProvenance: string | null = null;
   /** Programs co-invoked with the upgrade authority — the reach of that one key. */
   private coControlled: string[] = [];
+  private widenRan = false;
   private widenNote: string | null = null;
+  private hypothesis: Hypothesis | null = null;
+  private wantedSignatures: number | null = null;
 
   constructor(opts: ScoutOptions) {
     this.o = { maxDepth: 3, ...opts };
@@ -193,6 +203,11 @@ export class Scout {
     if (built.budgetLimited) this.stoppedAt = 'act';
     const evaluated = this.evaluate(ctx, built);
 
+    // The hypothesis is assembled after the widen path, not here: Decide has the posture
+    // and the diff but not the dependent counts, and the widen path is what learns what
+    // else the key controls. A claim written before those exist would be a guess about a
+    // sample this run had not finished taking.
+
     // The widen path. A zero-dependent result on a program held by a single key is
     // the weakest-looking and most dangerous combination in this tool, and the
     // honest second move is not "re-scan the same program harder" — it is to ask what
@@ -242,6 +257,7 @@ export class Scout {
           }
           others.delete(authority);
           this.coControlled = [...others].filter((x) => x && x !== ctx.program).slice(0, 50);
+          this.widenRan = true;
           this.widenNote =
             `sampled ${widenBuilt.found} transaction(s) touching authority ${authority}; ` +
             `${this.coControlled.length} other program(s) co-invoked or CPI-adjacent — reported as co-control, NOT as dependents`;
@@ -255,6 +271,35 @@ export class Scout {
           this.widenNote = 'widen aborted: budget exhausted mid-authority-sample';
         }
       }
+    }
+
+    // Now the ask, stated as a claim this run could not settle — see the note above
+    // `act` for why it is built here rather than inside Decide.
+    if (decision.escalation?.kind === 'needs_more_budget') {
+      const h = buildHypothesis({
+        ctx,
+        wantedSignatures: this.wantedSignatures ?? plannedOrZero(decision),
+        affordableSignatures: decision.plan.signatures,
+        bytecode: this.bytecodeDiff,
+        directDependents: evaluated.exposure.directCallers,
+        coControlled: this.coControlled,
+      });
+      // A funded run answers the earlier claim before it raises its own; the two are
+      // printed together so the reader can see the loop close.
+      if (this.o.carryHypothesis) {
+        h.outcome = judgeHypothesis(this.o.carryHypothesis, retestObservation(built, ctx.program, this.bytecodeDiff, this.coControlled, this.widenRan)).outcome;
+      }
+      decision.escalation.hypothesis = h;
+      this.hypothesis = h;
+      this.ledger.add({ kind: 'limit', summary: `hypothesis [${h.claimKind}]: ${h.claim} — falsifier: ${h.falsifier}`, ref: { program: ctx.program } });
+    } else if (this.o.carryHypothesis) {
+      const judged = judgeHypothesis(this.o.carryHypothesis, retestObservation(built, ctx.program, this.bytecodeDiff, this.coControlled, this.widenRan));
+      this.hypothesis = judged;
+      this.ledger.add({
+        kind: judged.outcome?.status === 'confirmed' ? 'edge' : 'limit',
+        summary: `prior hypothesis re-tested: ${judged.outcome?.status} — ${judged.outcome?.against}`,
+        ref: { program: ctx.program },
+      });
     }
 
     // Do not clobber a stop recorded by `act`: a run that ran out of budget
@@ -419,6 +464,7 @@ export class Scout {
   private async act(program: string, decision: Decision, source: 'program' | 'authority_history' = 'program'): Promise<ActResult> {
     const budget = this.o.budget;
     const planned = decision.plan.signatures;
+    this.wantedSignatures = decision.plan.wantedSignatures;
     void source;
     let stoppedReason: string | null = null;
     let budgetLimited = false;
@@ -769,6 +815,7 @@ export class Scout {
       cappedBy: built?.risk.cappedBy ?? stopNote,
       stoppedAt,
       stopNote,
+      ...(this.hypothesis ? { hypothesis: this.hypothesis } : {}),
       ...(this.coControlled.length > 0 || this.widenNote
         ? { coControlledPrograms: this.coControlled, widenNote: this.widenNote }
         : {}),
@@ -824,6 +871,38 @@ export function isBudgetStop(e: unknown): boolean {
 
 export type { WatchTarget };
 export { DotError };
+
+function plannedOrZero(d: { plan: { signatures: number } }): number {
+  return d.plan.signatures;
+}
+
+/**
+ * The observation a carried claim is judged on, read off what this run *did*: the traces
+ * it pulled, the selectors its edges actually carried, whether an entrypoint view existed
+ * to match against, and whether the authority history was ever sampled. Each "no" here is
+ * a check that did not run, which is why `observed` is reported separately from the counts
+ * — a zero from a check that never ran must not come back as `denied`.
+ */
+function retestObservation(
+  built: { found: number; graph: Graph },
+  program: string,
+  bytecode: BytecodeDiff | null,
+  coControlled: string[],
+  authorityHistorySampled: boolean,
+): ReTestObservation {
+  const selectors = built.graph.detailedEdges
+    .filter((e) => e.to === program)
+    .flatMap((e) => (e.selectors ?? []).map((s) => s.hex));
+  const count = (hexes: string[]) => hexes.reduce((n, hex) => n + selectors.filter((s) => s === hex).length, 0);
+  const surface = bytecode?.instructions ?? null;
+  return {
+    signaturesPulled: built.found,
+    addedSelectorMatches: count((surface?.added ?? []).map((a) => a.hex)),
+    removedSelectorMatches: count((surface?.removed ?? []).map((r) => r.hex)),
+    coControlled: coControlled.length,
+    observed: { entrypointSurface: Boolean(surface), authorityHistory: authorityHistorySampled },
+  };
+}
 
 function groups_count(sigs: Array<{ slot: number }>): number {
   return new Set(sigs.map((x) => x.slot)).size;

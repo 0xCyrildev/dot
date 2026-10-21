@@ -15,6 +15,7 @@ an empty scan gets reported as a clean one.
 | 8 | `evidence[]` | Can each claim be pointed at? | `EV-n` ids; a narrative that cites an id not in this list was discarded. |
 | 9 | `integrity.agreement` | Do two endpoints agree? | `disagreed` → `tierSource: "integrity"`, a halt about the tool, not the program. |
 | 10 | `limits[]` | What could not be seen | Always present. An empty graph plus `HISTORY_RETENTION` is a provider statement. |
+| 11 | `hypothesis.outcome` | Did the better-funded run settle the earlier claim? | `not_testable` is the answer Dot gives when it could not afford the plan or never took the observation the claim depends on. It is not a denial. |
 
 The worked example in this directory, `live-run-2026-10-21.json`, scores `P3` with `confidence: low` and
 `cappedBy: "only 0% of the planned sample was retrievable from the node"`. Read correctly it says:

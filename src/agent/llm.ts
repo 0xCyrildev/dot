@@ -32,6 +32,19 @@ const LlmDecisionSchema = z.object({
   rationale: z.string().min(8),
   cites: z.array(z.string()).min(1),
   planned_signatures: z.number().int().min(0).max(1000).optional(),
+  // The model may propose the hypothesis in the same schema the rule engine uses.
+  // It is not privileged: every field must be backed by cited evidence ids, and an
+  // unresolvable citation discards the whole answer including this part of it.
+  hypothesis: z
+    .object({
+      claim: z.string().min(12),
+      falsifier: z.string().min(12),
+      evidence_for: z.array(z.string()).min(1),
+      evidence_against: z.array(z.string()).min(1),
+      test_plan: z.array(z.object({ action: z.string().min(8), requested_rpc_calls: z.number().int().min(0).max(5000) })).min(1),
+      cites: z.array(z.string()).min(1),
+    })
+    .optional(),
 });
 
 const LlmNarrativeSchema = z.object({
@@ -286,7 +299,8 @@ export class RealLlmDecision implements DecisionEngine {
       'EVIDENCE:',
       evidenceBlock(ledger),
       '',
-      'Schema: {"proceed":bool,"confidence":"low|medium|high","rationale":str,"cites":["EV-n"],"planned_signatures":int}',
+      'Schema: {"proceed":bool,"confidence":"low|medium|high","rationale":str,"cites":["EV-n"],"planned_signatures":int,"hypothesis":{"claim":str,"falsifier":str,"evidence_for":[str],"evidence_against":[str],"test_plan":[{"action":str,"requested_rpc_calls":int}],"cites":["EV-n"]}}',
+    'If you supply a hypothesis it must be falsifiable in one observation, and every field of it must be backed by the evidence ids you cite.',
     ].join('\n');
 
     const estimate = estimateTokens(user) + this.cfg.maxOutputTokens;
@@ -330,13 +344,36 @@ export class RealLlmDecision implements DecisionEngine {
         signals: { ...rules.signals, llm_cites: ok.join(','), engine: 'llm' },
         source: 'llm',
         plan: {
-          signatures,
-          rpcCalls: signatures,
-          useLlm: parsed.proceed && ctx.idl.available,
-          wantedSignatures: Math.max(rules.plan.wantedSignatures, signatures),
-        },
-        llmTokensUsed: c.promptTokens + c.completionTokens,
-      };
+        signatures,
+        rpcCalls: signatures,
+        useLlm: parsed.proceed && ctx.idl.available,
+        wantedSignatures: Math.max(rules.plan.wantedSignatures, signatures),
+      },
+      llmTokensUsed: c.promptTokens + c.completionTokens,
+      ...(parsed.hypothesis
+        ? {
+            escalation: {
+              kind: 'needs_more_budget' as const,
+              requestedRpcCalls: parsed.hypothesis.test_plan.reduce((s2, t) => s2 + t.requested_rpc_calls, 0),
+              reason: parsed.hypothesis.claim,
+              whatItWouldConfirm: parsed.hypothesis.falsifier,
+              hypothesis: {
+                claimKind: 'unknown_coverage' as const,
+                claim: parsed.hypothesis.claim,
+                evidenceFor: parsed.hypothesis.evidence_for,
+                evidenceAgainst: parsed.hypothesis.evidence_against,
+                testPlan: parsed.hypothesis.test_plan.map((t) => ({
+                  action: t.action,
+                  requestedRpcCalls: t.requested_rpc_calls,
+                  outcomeIfPositive: 'the claim would be tested; the falsifier names what would deny it',
+                })),
+                falsifier: parsed.hypothesis.falsifier,
+                derivedFrom: { ...rules.signals, source: 'llm', cites: ok.join(',') },
+              },
+            },
+          }
+        : {}),
+    };
     } catch (e) {
       this.budget.settleTokens(estimate);
       if (e instanceof z.ZodError) {

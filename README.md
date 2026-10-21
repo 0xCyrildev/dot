@@ -204,6 +204,13 @@ affordable sample cannot distinguish "no dependents" from "not in the sample", t
 5 (the limit catalogue failed its own test). Coverage is measured against the sample the risk *wanted*,
 not the one the budget could afford, because that number is what caps the tier.
 
+**The ask is a claim, not a complaint.** Alongside the number, `needs_more_budget` carries a hypothesis
+derived from the signals this run actually saw — claim, evidence for, evidence against, a priced test
+plan and the one observation that would knock it down (`--hypothesis-out` writes it; `--hypothesis-file`
+carries it into a better-funded run, which re-tests it). A run that still cannot afford the plan, or that
+never sampled the thing the claim depends on, answers `not_testable` with the shortfall instead of
+`denied`: zero from a check that did not run is not evidence of absence.
+
 **Fair share under a firehose.** In chain-wide mode a deploy storm can spend the entire day's allowance
 on the first program that looks interesting. `UpgradeDispatcher` caps each investigation at
 `--per-event-rpc` (default 50) and the daemon at `--daily-rpc`, serves an authority handover or a

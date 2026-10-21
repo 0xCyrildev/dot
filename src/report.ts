@@ -82,6 +82,8 @@ export type DotReport = {
   };
   limits: LimitNote[];
   narrative?: Narrative;
+  /** The claim the agent would test with more budget, and its re-test outcome. */
+  hypothesis?: import('./agent/hypothesis.js').Hypothesis;
   /** Structural bytecode diff (Anchor entrypoints) when a prior image was obtainable. */
   bytecodeDiff?: import('./state/bytecodeDiff.js').BytecodeDiff;
   bytecodeProvenance?: string | null;
@@ -110,6 +112,31 @@ export function formatEscalation(r: DotReport): string | null {
     `Re-run with --budget-rpc +${n} (current ceiling ${r.budget.limits.maxRpcCalls}, spent ${r.budget.spent.rpcCalls}).`,
     `Until then this tier is capped by coverage: ${r.cappedBy ?? 'not stated'}.`,
   ].join('\n');
+}
+
+function renderHypothesisBlock(h: NonNullable<DotReport['hypothesis']>): string {
+  const L: string[] = [];
+  L.push(`## Hypothesis — \`${h.claimKind}\``);
+  L.push('');
+  L.push(`**Claim.** ${h.claim}`);
+  L.push('');
+  L.push('| evidence for | evidence against |');
+  L.push('| --- | --- |');
+  const rows = Math.max(h.evidenceFor.length, h.evidenceAgainst.length);
+  for (let i = 0; i < rows; i++) L.push(`| ${h.evidenceFor[i] ?? ''} | ${h.evidenceAgainst[i] ?? ''} |`);
+  L.push('');
+  L.push('**What more budget would test:**');
+  for (const t of h.testPlan) L.push(`- *(${t.requestedRpcCalls} RPC)* ${t.action} → ${t.outcomeIfPositive}`);
+  L.push('');
+  L.push(`**Falsifier.** ${h.falsifier}`);
+  if (h.outcome) L.push('');
+  if (h.outcome) {
+    const who = h.outcome.subject ? ` — of the carried \`${h.outcome.subject.claimKind}\` claim, not this one` : '';
+    L.push(`**Re-test outcome: \`${h.outcome.status}\`${who}** — ${h.outcome.against}`);
+    if (h.outcome.subject) L.push('');
+    if (h.outcome.subject) L.push(`> carried claim: _${h.outcome.subject.claim}_`);
+  }
+  return L.join('\n');
 }
 
 const SOL = 1_000_000_000;
@@ -189,7 +216,12 @@ export function renderMarkdown(r: DotReport): string {
     L.push(`source \`${String(d.source)}\`, proceed \`${String(d.proceed)}\`, plan \`${JSON.stringify(d.plan)}\``);
     L.push(`> ${String(d.rationale)}`);
     if (d.rejected) L.push(`LLM answer discarded: ${JSON.stringify(d.rejected)}`);
-    if (d.escalation) L.push(`**Escalation:** ${JSON.stringify(d.escalation)}`);
+    if (r.hypothesis) {
+      L.push('');
+      L.push(renderHypothesisBlock(r.hypothesis));
+    } else if (d.escalation) {
+      L.push(`**Escalation:** ${JSON.stringify(d.escalation)}`);
+    }
     if (r.widenNote) L.push(`Widen path: ${r.widenNote} — co-controlled programs: ${(r.coControlledPrograms ?? []).length}`);
   } else {
     L.push('No decision record.');
