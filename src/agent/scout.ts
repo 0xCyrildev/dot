@@ -71,7 +71,19 @@ export type ScoutOptions = {
   budget: Budget;
   mode: 'rules' | 'real';
   /** Narrative producer, only consulted in `real` mode when an IDL exists. */
-  narrate?: (ctx: UpgradeContext, graph: string, ledger: EvidenceLedger) => Promise<DotReport['narrative']>;
+  narrate?: (
+    ctx: UpgradeContext,
+    graph: {
+      program: string;
+      valueRoutedLamports: number;
+      mintsTouched: number;
+      dependents: Array<{ program: string; count: number; lamportsRouted: number }>;
+      idlDiff?: string;
+      posture: string;
+      authorityRotated: boolean;
+    },
+    ledger: EvidenceLedger,
+  ) => Promise<DotReport['narrative']>;
   idlResolver?: (program: string) => Promise<{ available: boolean; source?: string; diffText?: string }>;
   prior?: Map<string, PriorDigest>;
   /** Batched block ingestion. Omit it and Dot stays on per-signature reads. */
@@ -602,17 +614,26 @@ export class Scout {
       return {
         whatChanged: '',
         likelyImpactOnCallers: '',
-        cannotDetermine: 'no IDL was resolvable for this program, so Dot has no source-level view of the change; the tier comes from posture and the observed call graph only',
+        cannotDetermine: 'no IDL was resolvable for this program, so Dot has no source-level view of the change; the advisory below reasons from posture and the observed call graph only',
         cites: [],
         tokensUsed: 0,
         refused: 'idl_unavailable',
       };
     }
-    const summary = graph.detailedEdges
-      .slice(0, 12)
-      .map((e) => `${e.from} -> ${e.to} count=${e.count} lamports=${e.lamportsRouted}`)
-      .join('\n');
-    return this.o.narrate(ctx, summary, this.ledger);
+    const direct = directDependents(graph, ctx.program);
+    return this.o.narrate(
+      ctx,
+      {
+        program: ctx.program,
+        valueRoutedLamports: graph.detailedEdges.reduce((s2, e) => s2 + e.lamportsRouted, 0),
+        mintsTouched: new Set(graph.detailedEdges.flatMap((e) => e.tokenMintsTouched)).size,
+        dependents: direct.map((e) => ({ program: e.from, count: e.count, lamportsRouted: e.lamportsRouted })),
+        idlDiff: ctx.idl.diffText,
+        posture: ctx.authority.posture,
+        authorityRotated: ctx.change.authorityChanged,
+      },
+      this.ledger,
+    );
   }
 
   private integrityReport(program: string, label: string | undefined, t0: number): DotReport {

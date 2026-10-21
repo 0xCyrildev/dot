@@ -19,6 +19,11 @@ export type Narrative = {
   cites: string[];
   tokensUsed: number;
   refused?: string;
+  /** Advisory fields: what downstream operators should *do*. Present on the blast-radius path. */
+  mostLikelyImpact?: string;
+  whatOperatorsShouldDo?: string;
+  /** Which of the four required inputs the advisory actually had. */
+  inputs?: { valueRouted: boolean; dependents: boolean; idlDelta: boolean; posture: boolean };
 };
 
 export type DotReport = {
@@ -183,7 +188,7 @@ export function renderMarkdown(r: DotReport): string {
 
   if (r.narrative) {
     L.push('');
-    L.push('## Model reading of the IDL diff');
+    L.push('## Model advisory (what it means for callers)');
     if (r.narrative.refused) {
       L.push(`No narrative produced (${r.narrative.refused}). ${r.narrative.cannotDetermine}`);
     } else {
@@ -191,6 +196,15 @@ export function renderMarkdown(r: DotReport): string {
       L.push(`- impact on callers: ${r.narrative.likelyImpactOnCallers}`);
       L.push(`- **cannot determine: ${r.narrative.cannotDetermine}**`);
       L.push(`- cites: ${r.narrative.cites.join(', ')} (${r.narrative.tokensUsed} tokens)`);
+      if (r.narrative.mostLikelyImpact) {
+        L.push('');
+        L.push(`**Most likely impact:** ${r.narrative.mostLikelyImpact}`);
+        L.push(`**What dependent operators should do:** ${r.narrative.whatOperatorsShouldDo}`);
+        if (r.narrative.inputs) {
+          const i = r.narrative.inputs;
+          L.push(`_Advisory inputs present: value ${i.valueRouted ? 'yes' : 'NO'}, dependents ${i.dependents ? 'yes' : 'NO'}, IDL delta ${i.idlDelta ? 'yes' : 'NO'}, posture ${i.posture ? 'yes' : 'NO'}._`);
+        }
+      }
     }
   }
 

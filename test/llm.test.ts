@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Budget } from '../src/agent/budget.js';
 import { EvidenceLedger } from '../src/agent/evidence.js';
 import { RuleBasedDecision } from '../src/agent/rules.js';
-import { RealLlmDecision, llmConfigFromEnv, type LlmConfig } from '../src/agent/llm.js';
+import { RealLlmDecision, llmConfigFromEnv, narrateBlastRadius, type LlmConfig } from '../src/agent/llm.js';
 import type { UpgradeContext } from '../src/agent/decision.js';
 
 const ctx: UpgradeContext = {
@@ -125,5 +125,94 @@ describe('llmConfigFromEnv', () => {
     const c = llmConfigFromEnv({ DOT_LLM_API_KEY: 'k', DOT_LLM_BASE_URL: 'https://x.test/v1/' });
     expect(c?.baseUrl).toBe('https://x.test/v1');
     expect(c?.model).toBe('gpt-4o-mini');
+  });
+});
+
+describe('narrateBlastRadius requires its four inputs in the prompt', () => {
+  function advisoryHarness(reply: () => Promise<Reply>) {
+    const bodies: string[] = [];
+    const fetchImpl = ((url: string, init?: { body?: string }) => {
+      bodies.push(String(init?.body ?? ''));
+      return reply().then((r) =>
+        r.status === 200
+          ? { ok: true, status: 200, json: async () => r.body }
+          : { ok: false, status: r.status, json: async () => r.body },
+      );
+    }) as unknown as typeof fetch;
+    const cfg: LlmConfig = { baseUrl: 'http://fake.test/v1', apiKey: 'sk-not-logged', model: 'm', maxOutputTokens: 200, fetchImpl };
+    const budget = new Budget({ maxLlmTokens: 8000, maxRpcCalls: 100, maxSignatures: 100 });
+    const ledger = new EvidenceLedger();
+    const ev = ledger.add({ kind: 'edge', summary: 'A -> B 12 CPI, 5e9 lamports' });
+    return { cfg, budget, ledger, bodies, ev };
+  }
+
+  const graph = {
+    program: 'PROG1',
+    valueRoutedLamports: 8_000_000_000_000,
+    mintsTouched: 4,
+    dependents: [{ program: 'DEP1', count: 12, lamportsRouted: 5_000_000_000 }],
+    idlDiff: '- instruction withdraw\n+ instruction sweep',
+    posture: 'eoa' as const,
+    authorityRotated: true,
+  };
+
+  it('puts value routed, dependents, IDL delta and posture into the request', async () => {
+    const h = advisoryHarness(async () => ok({ most_likely_impact: 'callers encoding withdraw now fail', what_dependent_operators_should_do: 'pin the ix selector and watch for errors', cannot_determine: 'whether the withdraw logic moved or was gated', cites: [h.ev.id] }));
+    const a = await narrateBlastRadius(h.cfg, h.budget, h.ledger, ctx, graph);
+    const sent = JSON.parse(h.bodies[0]).messages[1].content as string;
+    expect(sent).toContain('1. VALUE ROUTED THROUGH PROG1');
+    expect(sent).toContain('8000000000000 lamports across 4 mint(s)');
+    expect(sent).toContain('2. DEPENDENT PROGRAMS');
+    expect(sent).toContain('DEP1 (12 CPI(s), 5000000000 lamports)');
+    expect(sent).toContain('3. IDL DELTA');
+    expect(sent).toContain('- instruction withdraw');
+    expect(sent).toContain('4. UPGRADE AUTHORITY POSTURE: eoa (ROTATED');
+    // The proxy label travels with the number, so a downstream reader cannot turn it into TVL.
+    expect(sent).toContain('NOT TVL and NOT custody');
+    expect(a.inputs).toEqual({ valueRouted: true, dependents: true, idlDelta: true, posture: true });
+    expect(a.refused).toBeUndefined();
+    expect(a.whatOperatorsShouldDo).toContain('pin the ix selector');
+  });
+
+  it('labels the missing IDL and records which inputs were absent', async () => {
+    const h = advisoryHarness(async () => ok({ most_likely_impact: 'unknown', what_dependent_operators_should_do: 'wait for an interface', cannot_determine: 'anything about the code change', cites: [h.ev.id] }));
+    const a = await narrateBlastRadius(h.cfg, h.budget, h.ledger, ctx, { ...graph, idlDiff: undefined });
+    const sent = JSON.parse(h.bodies[0]).messages[1].content as string;
+    expect(sent).toContain('IDL DELTA: NOT AVAILABLE');
+    expect(a.inputs.idlDelta).toBe(false);
+  });
+
+  it('says NONE ATTRIBUTED instead of implying safety when there are no dependents', async () => {
+    const h = advisoryHarness(async () => ok({ most_likely_impact: 'unknown from posture alone', what_dependent_operators_should_do: 'confirm the sample first', cannot_determine: 'any caller impact', cites: [h.ev.id] }));
+    const a = await narrateBlastRadius(h.cfg, h.budget, h.ledger, ctx, { ...graph, dependents: [] });
+    const sent = JSON.parse(h.bodies[0]).messages[1].content as string;
+    expect(sent).toContain('NONE ATTRIBUTED');
+    expect(sent).toContain('do not describe this as safe');
+    expect(a.inputs.dependents).toBe(false);
+  });
+
+  it('discards a whole advisory that cites an evidence id that was never issued', async () => {
+    const h = advisoryHarness(async () => ok({ most_likely_impact: 'confident nonsense about the change', what_dependent_operators_should_do: 'escalate everything immediately', cannot_determine: 'nothing, it claims', cites: ['EV-999'] }));
+    const a = await narrateBlastRadius(h.cfg, h.budget, h.ledger, ctx, graph);
+    expect(a.refused).toMatch(/discarded/);
+    expect(a.mostLikelyImpact).toBe('');
+    expect(a.whatOperatorsShouldDo).toBe('');
+    // Not trimmed to the good lines: the whole answer is gone, and the report says so.
+    expect(a.refused).toContain('not trimmed');
+  });
+
+  it('refuses before spending when the token budget cannot cover it', async () => {
+    const h = advisoryHarness(async () => ok({ most_likely_impact: 'should not be asked', what_dependent_operators_should_do: 'nothing yet', cannot_determine: 'everything', cites: [h.ev.id] }));
+    h.budget.reserveTokens(7950);
+    const a = await narrateBlastRadius(h.cfg, h.budget, h.ledger, ctx, graph);
+    expect(a.refused).toMatch(/token budget refused/);
+    expect(h.bodies).toHaveLength(0);
+  });
+
+  it('never leaks the api key into the advisory or its refusal', async () => {
+    const h = advisoryHarness(async () => ({ status: 500, body: {} }));
+    const a = await narrateBlastRadius(h.cfg, h.budget, h.ledger, ctx, graph);
+    expect(JSON.stringify(a)).not.toContain('sk-not-logged');
+    expect(a.refused).toMatch(/LLM_UNAVAILABLE|HTTP 500/);
   });
 });

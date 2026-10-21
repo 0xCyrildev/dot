@@ -4,7 +4,8 @@ import { Command } from 'commander';
 import { Budget, type BudgetLimits } from '../agent/budget.js';
 import { EvidenceLedger } from '../agent/evidence.js';
 import { RuleBasedDecision } from '../agent/rules.js';
-import { RealLlmDecision, llmConfigFromEnv, narrateIdlDiff } from '../agent/llm.js';
+import type { UpgradeContext } from '../agent/decision.js';
+import { advisoryToNarrative, RealLlmDecision, llmConfigFromEnv, narrateBlastRadius } from '../agent/llm.js';
 import { Scout, type PriorDigest } from '../agent/scout.js';
 import { HttpTransport } from '../rpc/transport.js';
 import { SolanaClient } from '../rpc/client.js';
@@ -482,8 +483,8 @@ program
           : {}),
         ...(useReal && cfg
           ? {
-              narrate: async (ctx: Parameters<typeof narrateIdlDiff>[3], graph: string, led: EvidenceLedger) =>
-                narrateIdlDiff(cfg, perUpgrade, led, ctx, graph),
+              narrate: async (ctx: UpgradeContext, graph: Parameters<typeof narrateBlastRadius>[4], led: EvidenceLedger) =>
+                advisoryToNarrative(await narrateBlastRadius(cfg, perUpgrade, led, ctx, graph)),
             }
           : {}),
       });

@@ -2,7 +2,7 @@ export { Budget, type BudgetLimits, type BudgetSnapshot } from './agent/budget.j
 export { EvidenceLedger, type Evidence } from './agent/evidence.js';
 export type { Decision, DecisionEngine, UpgradeContext } from './agent/decision.js';
 export { RuleBasedDecision } from './agent/rules.js';
-export { RealLlmDecision, llmConfigFromEnv, narrateIdlDiff, type LlmConfig } from './agent/llm.js';
+export { RealLlmDecision, llmConfigFromEnv, narrateIdlDiff, narrateBlastRadius, advisoryToNarrative, type LlmConfig, type BlastAdvisory } from './agent/llm.js';
 export { Scout, type ScoutOptions, type PriorDigest } from './agent/scout.js';
 export { HttpTransport, type RpcTransport } from './rpc/transport.js';
 export { SolanaClient, type SolanaClientOptions } from './rpc/client.js';

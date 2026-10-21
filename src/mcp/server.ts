@@ -4,8 +4,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { Budget } from '../agent/budget.js';
 import { RuleBasedDecision } from '../agent/rules.js';
-import { RealLlmDecision, llmConfigFromEnv, narrateIdlDiff } from '../agent/llm.js';
+import { advisoryToNarrative, RealLlmDecision, llmConfigFromEnv, narrateBlastRadius } from '../agent/llm.js';
 import { EvidenceLedger } from '../agent/evidence.js';
+import type { UpgradeContext } from '../agent/decision.js';
 import { Scout } from '../agent/scout.js';
 import { HttpTransport } from '../rpc/transport.js';
 import { SolanaClient } from '../rpc/client.js';
@@ -76,8 +77,8 @@ function makeScout(opts: ToolArgs, mode: 'rules' | 'real') {
       ),
     ...(mode === 'real' && cfg
       ? {
-          narrate: async (ctx: Parameters<typeof narrateIdlDiff>[3], graph: string, led: EvidenceLedger) =>
-            narrateIdlDiff(cfg, budget, led, ctx, graph),
+          narrate: async (ctx: UpgradeContext, graph: Parameters<typeof narrateBlastRadius>[4], led: EvidenceLedger) =>
+            advisoryToNarrative(await narrateBlastRadius(cfg, budget, led, ctx, graph)),
         }
       : {}),
   });

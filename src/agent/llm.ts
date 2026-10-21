@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Narrative } from '../report.js';
 import { Budget } from './budget.js';
 import { EvidenceLedger } from './evidence.js';
 import type { Decision, DecisionEngine, UpgradeContext } from './decision.js';
@@ -98,6 +99,143 @@ async function complete(cfg: LlmConfig, user: string): Promise<Completion> {
     content,
     promptTokens: json.usage?.prompt_tokens ?? 0,
     completionTokens: json.usage?.completion_tokens ?? 0,
+  };
+}
+
+const BlastNarrativeSchema = z.object({
+  most_likely_impact: z.string().min(8),
+  what_dependent_operators_should_do: z.string().min(8),
+  cannot_determine: z.string().min(8),
+  cites: z.array(z.string()).min(1),
+});
+
+export type BlastAdvisory = {
+  mostLikelyImpact: string;
+  whatOperatorsShouldDo: string;
+  cannotDetermine: string;
+  cites: string[];
+  tokensUsed: number;
+  inputs: { valueRouted: boolean; dependents: boolean; idlDelta: boolean; posture: boolean };
+  refused?: string;
+};
+
+/**
+ * The blast-radius advisory.
+ *
+ * Different question from the IDL narrator: not "what changed in the code" but "what
+ * should the operators downstream do about it". Four inputs are required, and the
+ * return records which of them were actually present, so an advisory produced without
+ * an IDL cannot be quoted later as though it had one.
+ *
+ * The same citation gate applies. This is an advisory, not a finding: it has no path
+ * into the tier, and a discarded answer is reported as discarded.
+ */
+export async function narrateBlastRadius(
+  cfg: LlmConfig,
+  budget: Budget,
+  ledger: EvidenceLedger,
+  ctx: UpgradeContext,
+  graph: {
+    program: string;
+    valueRoutedLamports: number;
+    mintsTouched: number;
+    dependents: Array<{ program: string; count: number; lamportsRouted: number }>;
+    idlDiff?: string;
+    posture: string;
+    authorityRotated: boolean;
+  },
+): Promise<BlastAdvisory> {
+  const inputs = {
+    valueRouted: Number.isFinite(graph.valueRoutedLamports),
+    dependents: graph.dependents.length > 0,
+    idlDelta: Boolean(graph.idlDiff && graph.idlDiff.trim() !== ''),
+    posture: Boolean(graph.posture),
+  };
+
+  const user = [
+    'You are the advisory stage of Dot, a Solana blast-radius analyzer. Answer two questions: the most likely impact of this upgrade on programs that call this one, and what those programs\' operators should do.',
+    '',
+    `1. VALUE ROUTED THROUGH ${graph.program} (upper-bound proxy, per transaction, NOT TVL and NOT custody): ` +
+      `${graph.valueRoutedLamports} lamports across ${graph.mintsTouched} mint(s).`,
+    `2. DEPENDENT PROGRAMS, each with its own attributed value: ${
+      graph.dependents.length > 0
+        ? graph.dependents
+            .slice(0, 20)
+            .map((d) => `${d.program} (${d.count} CPI(s), ${d.lamportsRouted} lamports)`)
+            .join('; ')
+        : 'NONE ATTRIBUTED — say so; do not describe this as safe'
+    }`,
+    `3. IDL DELTA: ${inputs.idlDelta ? graph.idlDiff : 'NOT AVAILABLE — the semantics of the change cannot be determined; reason only from posture and the observed graph'}`,
+    `4. UPGRADE AUTHORITY POSTURE: ${graph.posture}${graph.authorityRotated ? ' (ROTATED in this event — the party who can push the next change is a different party than before)' : ' (unchanged)'}`,
+    '',
+    'Rules: you may only assert facts covered by the evidence ids below. Name the thing the evidence does not cover in "cannot_determine" — being specific is the deliverable. Do not convert proxy value into a dollar or TVL figure. Do not advise a course of action that requires information you were not given.',
+    '',
+    'EVIDENCE:',
+    evidenceBlock(ledger),
+    '',
+    'Schema: {"most_likely_impact":str,"what_dependent_operators_should_do":str,"cannot_determine":str,"cites":["EV-n"]}',
+  ].join('\n');
+
+  const estimate = estimateTokens(user) + cfg.maxOutputTokens;
+  try {
+    budget.reserveTokens(estimate);
+  } catch (e) {
+    if (e instanceof DotError && e.code === 'BUDGET_EXHAUSTED_TOKENS') {
+      return { mostLikelyImpact: '', whatOperatorsShouldDo: '', cannotDetermine: 'no advisory produced', cites: [], tokensUsed: 0, inputs, refused: 'token budget refused the advisory call' };
+    }
+    throw e;
+  }
+
+  try {
+    const c = await complete(cfg, user);
+    const parsed = BlastNarrativeSchema.parse(extractJson(c.content));
+    budget.settleTokens(c.promptTokens + c.completionTokens);
+    const { ok, bad } = ledger.resolveCitations(parsed.cites);
+    if (bad.length > 0) {
+      return {
+        mostLikelyImpact: '',
+        whatOperatorsShouldDo: '',
+        cannotDetermine: 'advisory discarded',
+        cites: ok,
+        tokensUsed: c.promptTokens + c.completionTokens,
+        inputs,
+        refused: `discarded: cited ${bad.length} non-existent evidence id(s); the whole answer was dropped, not trimmed`,
+      };
+    }
+    return {
+      mostLikelyImpact: parsed.most_likely_impact,
+      whatOperatorsShouldDo: parsed.what_dependent_operators_should_do,
+      cannotDetermine: parsed.cannot_determine,
+      cites: ok,
+      tokensUsed: c.promptTokens + c.completionTokens,
+      inputs,
+    };
+  } catch (e) {
+    budget.settleTokens(estimate);
+    return {
+      mostLikelyImpact: '',
+      whatOperatorsShouldDo: '',
+      cannotDetermine: 'no advisory produced',
+      cites: [],
+      tokensUsed: estimate,
+      inputs,
+      refused: e instanceof DotError ? `${e.code}: ${e.message}` : String(e),
+    };
+  }
+}
+
+/** Advisory → report narrative. The advisory's own fields are kept, not flattened away. */
+export function advisoryToNarrative(a: BlastAdvisory): Narrative {
+  return {
+    whatChanged: a.mostLikelyImpact,
+    likelyImpactOnCallers: a.whatOperatorsShouldDo,
+    cannotDetermine: a.cannotDetermine,
+    cites: a.cites,
+    tokensUsed: a.tokensUsed,
+    mostLikelyImpact: a.mostLikelyImpact,
+    whatOperatorsShouldDo: a.whatOperatorsShouldDo,
+    inputs: a.inputs,
+    ...(a.refused ? { refused: a.refused } : {}),
   };
 }
 
@@ -211,15 +349,6 @@ export class RealLlmDecision implements DecisionEngine {
     }
   }
 }
-
-export type Narrative = {
-  whatChanged: string;
-  likelyImpactOnCallers: string;
-  cannotDetermine: string;
-  cites: string[];
-  tokensUsed: number;
-  refused?: string;
-};
 
 /**
  * The IDL-diff reader. Produces prose for the report and nothing else: it has no
