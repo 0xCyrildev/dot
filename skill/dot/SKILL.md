@@ -69,6 +69,12 @@ Read in this order, every time: `stoppedAt` → `cappedBy` → `sampleCoverage` 
 tier. A tier with `cappedBy` non-null is a tier limited by a blind spot; `NO_MALICE_DETECTION` and
 `FINALITY_VS_LATENCY` are in `dot limits --status` for the same reason.
 
+**Before analyzing one program, `dot limits --for <program>` costs about four calls and says which blind
+spots are live for it**: `applies` (observed here), `probe_clean` (one probe found nothing wrong at the
+point it touched — a retrievable newest signature says nothing about where the node's retention ends),
+`not_probed` (this run could not look), `by_construction` (no probe of one program would change it).
+`probe_clean` is not `applies`, and `not_probed` is never `probe_clean`.
+
 **`confidence` is not severity.** A low-confidence P1 is a different job from a high-confidence P1.
 `tierSource: "integrity"` means the *tool's inputs* contradicted each other (two endpoints, same slot,
 different bytes) and the run halted — that is not a statement about the program at all.

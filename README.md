@@ -281,6 +281,7 @@ dot watch --targets targets.example.json --state state.json
 dot watch --yellowstone <grpc-url> --authority <pubkey>   # chain-wide, no target list
 dot limits
 dot limits --status        # RESOLVED / NARROWED / UNRESOLVABLE_IN_CODE, each with its test files
+dot limits --for <program_id> --try-onchain-idl   # which limits are live for THIS program, from 4 reads
 dot replay --fixture tx.json --target <program>   # the real parser, offline, on captured bytes
 dot mcp
 ```
@@ -431,6 +432,16 @@ The tests that earned their place all started as code reviews of my own assumpti
 
 `dot limits` prints these with the full text and the escape route for each. They are output data, not
 prose in a README, so a report can name the ones that actually applied to it.
+
+**`dot limits --for <program>` answers it per program.** The catalogue is the general list; an operator
+asking "what am I not able to learn about *this* program" gets four statuses, from about four reads:
+`applies` (observed for this program — the node refused `-32015`, the IDL is nowhere, the Program account
+names a different ProgramData than the one Dot would read), `probe_clean` (one probe found nothing wrong
+*at the point it touched*, and the evidence column names that point — a retrievable newest signature says
+nothing about where the retention window ends), `not_probed` (this run could not look, priced in calls),
+and `by_construction` (a property of the data source or of intent, which no probe of one program could
+change). `docs/live-limits-for-2026-10-21.md` is a real run against a mainnet program upgraded that day:
+2 applies, 6 probed clean, 13 by construction, 4 RPC calls.
 
 | Code | What Dot cannot see |
 |---|---|

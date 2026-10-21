@@ -32,6 +32,7 @@ import type { Hypothesis } from '../agent/hypothesis.js';
 import { BlastRadiusScanner, renderBlastRadius, loadProgramList, loadAuthorityMap } from '../commands/blastRadius.js';
 import { LIMIT_NOTES } from '../limits.js';
 import { LIMIT_STATUS, auditCoverage, countStates, renderLimitStatus, verifyTestClaims, type LimitState } from '../commands/limits.js';
+import { inspectProgramLimits, renderProgramLimits } from '../commands/perProgram.js';
 import { TIER_MEANING } from '../score/risk.js';
 import { isDotError } from '../errors.js';
 import { isWellFormedPubkey } from '../ids.js';
@@ -172,7 +173,7 @@ async function build(o: GlobalOpts & BuildExtras) {
     ...(o.secondaryRpc ? { resilient: { quorum: (a: string) => quorum.getAccountInfoQuorum(a) } } : {}),
     ...(batcher ? { batcher, ingest: o.ingest as 'auto' | 'blocks' | 'signatures' } : {}),
   });
-  return { client, budget, scout, mode };
+  return { client, budget, scout, mode, endpointCount: endpoints.length };
 }
 
 program
@@ -803,8 +804,44 @@ program
   .description('print what Dot cannot see, as data')
   .option('--status', 'three-state view: RESOLVED / NARROWED / UNRESOLVABLE_IN_CODE, with the test behind each claim')
   .option('--state <state>', 'with --status: filter to one state', undefined)
-  .option('--format <fmt>', 'with --status: md | json', 'md')
-  .action(async (opts: { status?: boolean; state?: string; format: string }) => {
+  .option('--format <fmt>', 'md | json', 'md')
+  .option('--for <program_id>', 'probe ONE program: which limits are live for it, decided from reads rather than recited')
+  .option('--rpc <url>', 'JSON-RPC endpoint for --for (or DOT_RPC_URL)')
+  .option('--secondary-rpc <url>', 'second endpoint; changes SINGLE_NODE_TRUST from applies to probed')
+  .option('--idl <path|url>', 'interface definition, so NO_IDL_CONTRACT can be answered rather than assumed')
+  .option('--try-onchain-idl', 'attempt the legacy anchor:idl PDA read before answering NO_IDL_CONTRACT')
+  .option('--multisig <authority>', 'declare an authority you know to be a multisig (repeatable)', collect, [])
+  .option('--budget-rpc <n>', 'calls --for may spend', '8')
+  .action(async (opts: { status?: boolean; state?: string; format: string; for?: string; rpc?: string; secondaryRpc?: string; idl?: string; tryOnchainIdl?: boolean; multisig?: string[]; budgetRpc?: string }) => {
+    if (opts.for) {
+      if (!isWellFormedPubkey(opts.for)) {
+        process.stderr.write(`error: ${opts.for} is not a 32-byte base58 address\n`);
+        process.exitCode = 2;
+        return;
+      }
+      // Same plumbing as analyze, so a probe and an analysis of the same program cannot
+      // disagree about which endpoint they asked.
+      const o = { ...(opts as unknown as GlobalOpts), sample: '1', commitment: 'finalized', mode: 'rules', budgetTokens: '0', budgetWall: '60000' };
+      const { client, budget, endpointCount } = await build(o);
+      let idl: 'found' | 'absent' | 'not_probed' = 'not_probed';
+      if (opts.idl || opts.tryOnchainIdl) {
+        const res = await resolveIdl(opts.for, { ...(opts.idl ? { idl: opts.idl } : {}), tryOnchain: opts.tryOnchainIdl }, client);
+        idl = res.available ? 'found' : 'absent';
+      }
+      const probe = await inspectProgramLimits({
+        client,
+        budget,
+        program: opts.for,
+        endpointCount,
+        idl,
+        knownMultisigs: opts.multisig ?? [],
+      });
+      if (opts.format === 'json') process.stdout.write(`${JSON.stringify(probe, null, 2)}\n`);
+      else process.stdout.write(`${renderProgramLimits(probe)}\n`);
+      // A probe that could not run any read is not a table of answers: say so in the code.
+      if (probe.cost.rpcCalls === 0) process.exitCode = 3;
+      return;
+    }
     if (opts.status) {
       const verification = await verifyTestClaims(process.cwd());
       if (opts.format === 'json') {
