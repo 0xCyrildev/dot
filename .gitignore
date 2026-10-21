@@ -7,3 +7,4 @@ AGENTS.md
 reports/
 state/
 .DS_Store
+*.tmp.mjs
