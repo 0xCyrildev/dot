@@ -79,14 +79,14 @@ export const LIMIT_STATUS: LimitStatus[] = [
     fix: 'Use endpoints from different providers, not just different URLs.',
   },
   {
-    code: 'GRPC_LIVE_PATH_MOCKED',
+    code: 'GRPC_LIVE_PATH_UNREACHABLE',
     state: 'NARROWED',
     change:
-      'Raw protobuf frames built with the package’s own generated codec, carrying a captured mainnet ProgramData account, are decoded by the feed and still yield the correct upgrade authority. The message shape is no longer assumed.',
+      'Raw protobuf frames built with the package’s own generated codec, carrying a captured mainnet ProgramData account, are decoded by the feed and still yield the correct upgrade authority; the feed now opens the channel before it subscribes (measured: without `connect()` the v9 client throws locally in ~1ms with a message that reads like a provider outage) and bounds a connect that never settles. The message shape is no longer assumed.',
     remains:
-      'HTTP/2 handshake, x-token auth, isReplay semantics, keepalive and reconnect are below the seam any offline test reaches. `--authority` server-side filtering is untested against a real node’s filter implementation.',
+      'No provider has ever delivered a frame to this build. Six Geyser hostnames probed 2026-10-21 without a token; every failure surfaced as the same one opaque native string, and the control against a host with no Geyser service at all produced the identical text — so auth-missing, service-absent and filter-refused are indistinguishable from the client side. isReplay, keepalive and reconnect remain unexercised in the field, as does `--authority` server-side filtering against a real node.',
     tests: ['test/yellowstone-live.test.ts'],
-    fix: 'Set YELLOWSTONE_ENDPOINT to run the gated live test, then read feed.statsView() against a real stream.',
+    fix: 'Set YELLOWSTONE_ENDPOINT (and YELLOWSTONE_TOKEN) to run the gated live test, then read feed.statsView() against a real stream. docs/blocked.md §3 has the hostnames and the reproduction command.',
   },
   {
     code: 'PRE_DEPLOY_PARTIAL',

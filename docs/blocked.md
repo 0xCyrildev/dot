@@ -69,12 +69,68 @@ DOT_TEST_SO=/path/to/program.so DOT_TEST_IDL=/path/to/idl.json npx vitest run te
 On a networked machine, `cargo build-sbf` inside any Anchor project produces both artifacts
 in about two minutes. Until then `BYTECODE_SCANABILITY_UNVALIDATED` stays in the catalogue.
 
-## 3. Yellowstone gRPC against a live endpoint — BLOCKED (no endpoint, no token)
+## 3. Yellowstone gRPC against a live provider — BLOCKED (no token), but the probe found a bug in Dot
 
-`GRPC_LIVE_PATH_MOCKED` covers what was proven: raw protobuf frames built with the
-package's own generated codec, carrying captured mainnet `ProgramData` bytes, decoded
-by the feed and still yielding the correct upgrade authority. Not proven: HTTP/2
-handshake, `x-token` auth, `isReplay` semantics, keepalive, reconnect.
+`GRPC_LIVE_PATH_UNREACHABLE`. Renamed from `GRPC_LIVE_PATH_MOCKED` because probing it
+discovered the old label described the test rather than the world.
 
-Set `YELLOWSTONE_ENDPOINT` (+ `YELLOWSTONE_TOKEN`) and the gated test in
-`test/yellowstone-live.test.ts` runs; it is `skipIf`-ed, not silently passing.
+### What the probe found first: `start()` never opened a channel
+
+`@triton-one/yellowstone-grpc` v9 builds its channel inside `connect()`; `subscribe()` on a
+client that never connected throws **locally**:
+
+```
+Client not connected. Call connect() first
+```
+
+Dot's `start()` did not call `connect()`. The result, measured on 2026-10-21, was six
+provider hostnames all "refusing" within 0–1 ms — a latency that is impossible for a network
+call, which is how the bug was spotted. So every earlier claim of "no live endpoint is
+reachable" was partly a claim about Dot's own code. Fixed in `src/rpc/yellowstone.ts`; the
+regression is `test/yellowstone-live.test.ts > the connection sequence the real SDK demands`.
+
+Two more defects surfaced by the same probe, both now covered:
+
+- `connect()` can hang with no socket activity. A local HTTP/2 server received **zero bytes**
+  and the promise never settled, so `dot watch --yellowstone` would stall at startup forever.
+  `connectTimeoutMs` (default 15 s) bounds it and reports `stage: "connect"`.
+- A stream error was re-thrown as `DotError('RPC_TRANSPORT', …, {})` — empty details — so the
+  provider's reason was discarded exactly when an operator needed it. The cause and the
+  redacted endpoint are now carried, and `connected` goes false.
+
+### What is still blocked: nobody has ever sent Dot a frame
+
+Six hostnames, no token (this box has no Geyser credentials of any kind):
+
+| endpoint | ms | outcome |
+|---|---:|---|
+| `https://api.rpcpool.com` | 2509 | subscribed, then stream error `subscribe stream receive failed` |
+| `https://mainnet.rpcpool.com` | 6753 | same |
+| `https://grpc.mainnet.rpcpool.com` | 1412 | same |
+| `https://solana-grpc.publicnode.com` | 1140 | `subscribe refused: failed to open subscribe stream` |
+| `https://grpc.publicnode.com` | 1043 | same |
+| `https://mainnet.helius-rpc.com` | 25001 | no settle; the bounded connect/subscribe path reported the timeout |
+
+The control that turns this into a documented limit instead of a diagnosis: **a host with no
+Geyser service at all, `https://api.mainnet-beta.solana.com`, produced the identical string**
+(`subscribe stream receive failed`), as did an unfiltered subscribe against rpcpool. The
+native client collapses missing token, absent service and refused filter into one opaque
+message, so Dot cannot tell those apart from the client side and does not pretend to. An
+unresolvable host is distinguishable — that fails at `stage: connect` in 88 ms.
+
+Reproduce:
+
+```bash
+# gated live test; skips without the endpoint rather than passing vacuously
+YELLOWSTONE_ENDPOINT=https://<your-geyser> YELLOWSTONE_TOKEN=<token> \
+  npx vitest run test/yellowstone-live.test.ts
+
+# or drive the watcher and read the counters
+node dist/cli/index.js watch --yellowstone https://<your-geyser> --token <token> \
+  --targets targets.example.json --once
+```
+
+Read `feed.statsView()`: `updates` must rise, `startupSkipped` should be non-zero on a
+replay, `layoutMismatch` should stay near zero. A flat `updates` with no error is a filter
+that matches nothing — not a quiet chain. `isReplay`, keepalive and reconnect stay
+unexercised until that run happens.

@@ -1,6 +1,6 @@
 # Limits that apply to FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf
 
-ProgramData `BmArTGeoddLk3tts8AvH2ivNfVUtoHCX6V7dKDaVD4Xq` at slot 459725242, upgrade authority `eoa` (w3mDDNmTLnp9FUfjdPrGZt7GyTBWzjyF5wGvzdQGDaD), 432384 bytecode bytes.
+ProgramData `BmArTGeoddLk3tts8AvH2ivNfVUtoHCX6V7dKDaVD4Xq` at slot 459733797, upgrade authority `eoa` (w3mDDNmTLnp9FUfjdPrGZt7GyTBWzjyF5wGvzdQGDaD), 432384 bytecode bytes.
 Probed with 4 RPC call(s).
 
 | limit | status | what was observed | catalogue state | way out |
@@ -18,7 +18,7 @@ Probed with 4 RPC call(s).
 | `BYTECODE_SCANABILITY_UNVALIDATED` | **by_construction** | not a property of this program: the discriminator scan is validated against Anchor’s derivation rule, not against a compiled .so | NARROWED | Point the gated test at any real artifact: DOT_TEST_SO=program.so DOT_TEST_IDL=idl.json npx vitest run… |
 | `FAILED_TRANSACTIONS_ROLLED_BACK` | **by_construction** | not a property of this program: a failed transaction proves reach and intent, not a state change | RESOLVED | Dot keeps failedCpiOccurrences and tracesFailed separate from the value sums, so an integrator that started… |
 | `FEED_BACKPRESSURE` | **by_construction** | not a property of this program: a live feed that cannot keep up drops events, and dropped is not clean | UNRESOLVABLE_IN_CODE | UpgradeDispatcher caps each investigation at --per-event-rpc (default 50) and the daemon at --daily-rpc,… |
-| `GRPC_LIVE_PATH_MOCKED` | **by_construction** | not a property of this program: the Geyser path is exercised against encoded frames until an endpoint is configured | NARROWED | Set YELLOWSTONE_ENDPOINT (and YELLOWSTONE_TOKEN) to un-skip the live test in yellowstone-live.test.ts, then… |
+| `GRPC_LIVE_PATH_UNREACHABLE` | **by_construction** | not a property of this program: no Geyser endpoint has ever answered this build, so live-feed detection of its upgrades is unproven in the field | NARROWED | Set YELLOWSTONE_ENDPOINT (and YELLOWSTONE_TOKEN) to un-skip the live test in yellowstone-live.test.ts, then… |
 | `NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION` | **by_construction** | not a property of this program: detecting its upgrade needs a watch entry or a Geyser feed either way | RESOLVED | Dot ships both layers: watch --targets polls a named list over JSON-RPC, and watch --yellowstone <url>… |
 | `NO_MALICE_DETECTION` | **by_construction** | not a property of this program: Dot measures blast radius and does not classify intent | UNRESOLVABLE_IN_CODE | Read the components array and the evidence ledger before escalating to anyone. |
 | `PDA_HOLDINGS_NOT_ENUMERATED` | **by_construction** | not a property of this program: custody lives in PDAs whose seeds are in the deployment repo, not on the chain | NARROWED | --seeds seeds.example.json derives each PDA, reads them in getMultipleAccounts chunks of up to 100, and sums… |

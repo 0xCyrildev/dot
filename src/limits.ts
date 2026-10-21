@@ -18,7 +18,7 @@ export type LimitCode =
   | 'ENDPOINT_CORROBORATION'
   | 'PROGRAMDATA_REVERSE_LOOKUP'
   | 'FEED_BACKPRESSURE'
-  | 'GRPC_LIVE_PATH_MOCKED'
+  | 'GRPC_LIVE_PATH_UNREACHABLE'
   | 'BYTECODE_SCANABILITY_UNVALIDATED';
 
 export type LimitNote = {
@@ -52,12 +52,12 @@ export const LIMIT_NOTES: LimitNote[] = [
     always: true,
   },
   {
-    code: 'GRPC_LIVE_PATH_MOCKED',
-    title: 'The Geyser wire format is proven against real bytes; the socket beneath it is not',
+    code: 'GRPC_LIVE_PATH_UNREACHABLE',
+    title: 'The Geyser wire format is proven against real bytes; no live endpoint has ever answered',
     blind:
-      'What is proven: `test/yellowstone-live.test.ts` builds a `SubscribeUpdate` frame with the package’s own generated `encode`, feeds the resulting **raw protobuf bytes** into the feed, and asserts a captured mainnet `ProgramData` account survives the trip byte-for-byte — pubkey, data length, lamports, `writeVersion`, slot — and that `decodeProgramData` recovers the real upgrade authority from those bytes. Unclassifiable, truncated and `isStartup` frames are also covered. What is NOT proven: HTTP/2 handshake, x-token auth, `isReplay` semantics, ping/pong keepalive, and reconnect. Those live below the seam any test in this repo can reach without an endpoint. `test/transports.test.ts` additionally exercises the object-level fake; neither substitutes for the other.',
+      'What is proven: `test/yellowstone-live.test.ts` builds a `SubscribeUpdate` frame with the package’s own generated `encode`, feeds the resulting **raw protobuf bytes** into the feed, and asserts a captured mainnet `ProgramData` account survives the trip byte-for-byte — pubkey, data length, lamports, `writeVersion`, slot — and that `decodeProgramData` recovers the real upgrade authority from those bytes. It also proves the feed calls `connect()` before `subscribe()` and bounds a channel that never completes. What is NOT proven: that any provider has ever sent Dot a frame. Probed 2026-10-21 from this box with no token: six Geyser hostnames either failed the `subscribe` with the native client’s one opaque string (`subscribe stream receive failed` / `failed to open subscribe stream`) or hung. The control that makes this a limit rather than a bug report: **a host with no Geyser service at all (`api.mainnet-beta`) produced the identical error string as a host that does (`api.rpcpool.com`)**, so Dot cannot distinguish a missing token from a missing service from a refused filter — and a local HTTP/2 server that would have answered with a real frame received **zero bytes**, because the vendored native client does not speak plaintext. `isReplay`, keepalive and reconnect therefore remain unexercised in the field.',
     mitigation:
-      'Set `YELLOWSTONE_ENDPOINT` (and `YELLOWSTONE_TOKEN`) to un-skip the live test in `yellowstone-live.test.ts`, then run `dot watch --yellowstone <url>` and read `feed.statsView()`: `updates` must rise, `startupSkipped` should be non-zero on a replay, `layoutMismatch` should stay near zero. A flat `updates` counter with no error is the signature of a filter that matches nothing — which is exactly the failure mode of passing bytes where this API wants base58 strings — not evidence of a quiet chain.',
+      'Set `YELLOWSTONE_ENDPOINT` (and `YELLOWSTONE_TOKEN`) to un-skip the live test in `yellowstone-live.test.ts`, then run `dot watch --yellowstone <url>` and read `feed.statsView()`: `updates` must rise, `startupSkipped` should be non-zero on a replay, `layoutMismatch` should stay near zero. A flat `updates` counter with no error is the signature of a filter that matches nothing — which is exactly the failure mode of passing bytes where this API wants base58 strings — not evidence of a quiet chain. `docs/blocked.md` §3 carries the hostnames, the stage each failed at and the exact strings.',
     always: false,
   },
   {

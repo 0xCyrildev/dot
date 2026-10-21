@@ -206,7 +206,7 @@ function decide(f: Facts): ProgramLimitRow[] {
     ['BLOCK_FETCH_AMPLIFICATION', 'not a property of this program: a block carries every transaction in the slot, so batching trades calls for bytes'],
     ['PRE_DEPLOY_PARTIAL', 'not a property of this program: a Buffer has no back-link to the program it becomes'],
     ['FEED_BACKPRESSURE', 'not a property of this program: a live feed that cannot keep up drops events, and dropped is not clean'],
-    ['GRPC_LIVE_PATH_MOCKED', 'not a property of this program: the Geyser path is exercised against encoded frames until an endpoint is configured'],
+    ['GRPC_LIVE_PATH_UNREACHABLE', 'not a property of this program: no Geyser endpoint has ever answered this build, so live-feed detection of its upgrades is unproven in the field'],
     ['BYTECODE_SCANABILITY_UNVALIDATED', 'not a property of this program: the discriminator scan is validated against Anchor’s derivation rule, not against a compiled .so'],
   ];
   for (const [code, why] of construction) rows.push(row(code, 'by_construction', why));

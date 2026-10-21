@@ -59,9 +59,13 @@ describe('limit status taxonomy', () => {
   });
 
   it('keeps the geyser path narrowed, not resolved, while no live endpoint has been reached', () => {
-    const g = statusFor('GRPC_LIVE_PATH_MOCKED');
+    const g = statusFor('GRPC_LIVE_PATH_UNREACHABLE');
     expect(g?.state).toBe('NARROWED');
-    expect(g?.remains).toContain('handshake');
+    // The rename itself is the claim: MOCKED described what a test did; UNREACHABLE
+    // describes what the world refused. Neither is allowed to read as "verified".
+    expect(g?.remains).toMatch(/No provider has ever delivered a frame/);
+    expect(g?.change).toMatch(/connect\(\)/);
+    expect(g?.fix).toMatch(/YELLOWSTONE_ENDPOINT/);
   });
 
   it('renders a readable table and counts that match the data', () => {

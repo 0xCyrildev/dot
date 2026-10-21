@@ -87,6 +87,13 @@ export type YellowstoneOptions = {
   /** Watch one upgrade authority's programs by server-side memcmp. See `authorityFilterVerified`. */
   authorityPubkey?: string;
   includeStartup?: boolean;
+  /**
+   * `connect()` on the vendored native client can hang forever without ever opening a
+   * socket — measured against a local HTTP/2 server on 2026-10-21, where the promise never
+   * settled and the server received zero bytes. A daemon that stalls at startup looks like
+   * a idle watcher, so the wait is bounded and the stall is an error.
+   */
+  connectTimeoutMs?: number;
   /** Injected for tests; production uses the real client. */
   clientFactory?: (opts: YellowstoneOptions) => GeyserLike;
 };
@@ -112,6 +119,14 @@ export function encodeUpdate(update: SubscribeUpdate): Uint8Array {
 
 /** The slice of the generated client Dot depends on, so tests can fake exactly this. */
 export interface GeyserLike {
+  /**
+   * v9 of the SDK builds its channel lazily inside `connect()`; `subscribe()` on a
+   * never-connected client throws locally — `Client not connected. Call connect() first` —
+   * without ever opening a socket. Measured here on 2026-10-21: six provider hostnames all
+   * failed in 0–1 ms, which is a bug in Dot's start path, not a network result. Optional
+   * because a hand-built fake may not model a channel at all.
+   */
+  connect?(): Promise<void>;
   subscribe(req: SubscribeRequest): Promise<{ on(ev: string, cb: (...a: any[]) => void): void; destroy?(): void; cancel?(): void }>;
   ping?(count: number): Promise<unknown>;
 }
@@ -197,11 +212,35 @@ export class YellowstoneUpgradeFeed extends EventEmitter {
     const client = this.o.clientFactory
       ? this.o.clientFactory(this.o)
       : new GeyserClient(this.o.endpoint, this.o.xToken, undefined);
+    // Two failure stages, reported apart: a channel that cannot be built (DNS, TLS, auth
+    // token rejected) and a subscription that the server refuses or never answers. A
+    // reader deciding "is my endpoint down or is my filter wrong" needs that distinction,
+    // and before it existed the SDK's local "not connected" throw looked like a provider
+    // outage.
+    try {
+      const connect = client.connect?.();
+      if (connect) {
+        const ms = this.o.connectTimeoutMs ?? 15_000;
+        await Promise.race([
+          connect,
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`no channel after ${ms}ms; the endpoint never completed a handshake`)), ms).unref?.()),
+        ]);
+      }
+    } catch (e) {
+      this.stats.errors++;
+      this.running = false;
+      throw new DotError('RPC_TRANSPORT', `yellowstone channel could not be opened against ${this.redacted()}`, {
+        stage: 'connect',
+        cause: (e as Error).message,
+      });
+    }
     try {
       this.stream = await client.subscribe(this.buildRequest());
     } catch (e) {
       this.stats.errors++;
-      throw new DotError('RPC_TRANSPORT', `yellowstone subscribe failed against ${this.redacted()}`, {
+      this.running = false;
+      throw new DotError('RPC_TRANSPORT', `yellowstone subscribe refused by ${this.redacted()}`, {
+        stage: 'subscribe',
         cause: (e as Error).message,
       });
     }
@@ -209,7 +248,17 @@ export class YellowstoneUpgradeFeed extends EventEmitter {
     this.stream.on('data', (payload: SubscribeUpdate | Uint8Array) => this.ingest(payload));
     this.stream.on('error', (err: Error) => {
       this.stats.errors++;
-      this.emit('error', new DotError('RPC_TRANSPORT', `yellowstone stream error: ${err.message}`, {}));
+      // The raw cause has to survive. A feed that reports "stream error" and nothing else
+      // cannot be triaged: UNAUTHENTICATED, a deadline, a reset HTTP/2 stream and a refused
+      // filter all look identical at this level, and they have different fixes.
+      this.stats.connected = false;
+      this.emit(
+        'error',
+        new DotError('RPC_TRANSPORT', `yellowstone stream error from ${this.redacted()}: ${err.message}`, {
+          cause: err.message,
+          endpoint: this.redacted(),
+        }),
+      );
     });
     this.stream.on('close', () => {
       this.stats.connected = false;

@@ -201,10 +201,18 @@ a property of the chain under "not done".
   `getMultipleAccounts` chunks, and reports unresolved seed variables, absent accounts and an incomplete
   sweep separately. A publisher who shares no seeds has, by construction, unobservable custody.
 - `NO_IDL_CONTRACT`, `NO_MALICE_DETECTION`, `FINALITY_VS_LATENCY` — chain and intent, not code.
-- `GRPC_LIVE_PATH_MOCKED` — honest about its own build: raw protobuf frames built with the codec and
-  carrying captured `ProgramData` bytes are decoded and still yield the right upgrade authority, but
-  HTTP/2 handshake, `x-token` auth, `isReplay` and reconnect have never been exercised against a live
-  endpoint here. The gated test skips rather than passing vacuously.
+- `GRPC_LIVE_PATH_UNREACHABLE` — honest about its own build: raw protobuf frames built with the codec
+  and carrying captured `ProgramData` bytes are decoded and still yield the right upgrade authority, but
+  **no provider has ever delivered a frame to this build**. Probing six Geyser hostnames on 2026-10-21
+  turned up a bug first: `start()` never called the v9 client's `connect()`, so every live attempt threw
+  locally in ~1 ms and *looked* like a provider outage. Fixed, and two more defects found by the same
+  probe — a `connect()` that can hang forever now has a bounded timeout, and a dropped stream now keeps
+  the provider's reason instead of rethrowing an empty envelope. What remains unproven is liveness: the
+  native client answers a missing token, an absent Geyser service and a refused filter with one identical
+  opaque string (measured — `api.mainnet-beta`, which has no Geyser at all, fails with the same text as
+  `api.rpcpool.com`), so `isReplay`, keepalive and reconnect have still never been exercised against a live
+  endpoint here. The gated test skips rather than passing vacuously. `docs/blocked.md` §3 carries the
+  hostnames, the timings and the reproduction command.
 
 Detection is deterministic throughout. In `--mode real` a model reads the IDL delta and the dependent list
 and writes an advisory — *what is the likely impact, what should those operators do* — with the four

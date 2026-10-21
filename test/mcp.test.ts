@@ -58,13 +58,25 @@ beforeAll(async () => {
       // Recorded, not swallowed: the assertion below turns this into a failure.
     }
   });
+  // Synchronize on the server's own readiness line instead of racing a timer against a
+  // cold tsx start. Measured: this suite failed with "no response to initialize within 10s"
+  // while install.test.ts was running `npm run build`, `npm pack` and two global installs in
+  // parallel — the child was alive, just starved. A timeout tuned to an unloaded machine is
+  // a flake that teaches nothing; the banner is written after `server.connect()`, so seeing
+  // it means the process can answer.
+  const deadline = Date.now() + 60_000;
+  while (!stderrText.join('').includes('dot mcp ready')) {
+    if (Date.now() > deadline) throw new Error(`child never reported ready within 60s; stderr: ${stderrText.join('').slice(0, 400)}`);
+    if (child.exitCode !== null) throw new Error(`child exited with ${child.exitCode}; stderr: ${stderrText.join('').slice(0, 400)}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
   await request(1, 'initialize', {
     protocolVersion: '2025-06-18',
     capabilities: {},
     clientInfo: { name: 'dot-test-client', version: '0.0.0' },
   });
   send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-}, 30_000);
+}, 120_000);
 
 afterAll(() => {
   child?.kill('SIGTERM');

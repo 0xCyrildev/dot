@@ -11,6 +11,8 @@ import {
   type GeyserLike,
 } from '../src/rpc/yellowstone.js';
 import { decodeProgramData } from '../src/state/programdata.js';
+import { DotError, isDotError } from '../src/errors.js';
+import * as Geyser from '@triton-one/yellowstone-grpc';
 import { BPF_LOADER_UPGRADEABLE } from '../src/ids.js';
 import { FakeTransport, fixture } from './helpers.js';
 import type { SubscribeRequest, SubscribeUpdate } from '@triton-one/yellowstone-grpc';
@@ -173,6 +175,115 @@ describe('yellowstone wire format (protobuf level)', () => {
     const slotOnly = encodeUpdate({ filters: ['x'], createdAt: undefined, slot: { slot: '1', status: 0 } } as unknown as SubscribeUpdate);
     expect(slotOnly.length).toBeGreaterThan(0);
     expect(decodeUpdate(slotOnly).filters).toEqual(['x']);
+  });
+});
+
+describe('the connection sequence the real SDK demands', () => {
+  /**
+   * Regression for the defect that made every live attempt fail before touching a socket.
+   *
+   * Probed on 2026-10-21: `@triton-one/yellowstone-grpc` v9 builds its channel inside
+   * `connect()`, and `subscribe()` on a client that never connected throws
+   * `Client not connected. Call connect() first` in under two milliseconds. Dot's `start()`
+   * did not call it, so the failure looked like a provider outage — six hostnames, all
+   * "refused" in ~1 ms — and the real bug was on our side of the seam. The fake in
+   * `transports.test.ts` never modelled a channel, which is exactly why it could not catch
+   * this: a fake that accepts whatever the author's code happens to call proves nothing
+   * about an API the author never read.
+   */
+  function ordering(connect: () => Promise<void>) {
+    const order: string[] = [];
+    const fake: GeyserLike = {
+      connect: async () => {
+        order.push('connect');
+        await connect();
+      },
+      subscribe: async () => {
+        order.push('subscribe');
+        return { on: () => {}, destroy: () => {} };
+      },
+    };
+    return { order, fake };
+  }
+
+  it('opens the channel before it subscribes', async () => {
+    const f = ordering(async () => {});
+    const feed = new YellowstoneUpgradeFeed({ endpoint: 'http://127.0.0.1:10000', clientFactory: () => f.fake });
+    await feed.start();
+    expect(f.order).toEqual(['connect', 'subscribe']);
+    expect(feed.statsView().connected).toBe(true);
+    feed.stop();
+  });
+
+  it('reports a channel that cannot be opened as stage connect, with the cause kept', async () => {
+    const f = ordering(async () => {
+      throw new Error('dns: ENOTFOUND grpc.example');
+    });
+    const feed = new YellowstoneUpgradeFeed({ endpoint: 'http://grpc.example', clientFactory: () => f.fake });
+    const e = await feed.start().catch((x) => x);
+    expect(isDotError(e)).toBe(true);
+    expect((e as DotError).code).toBe('RPC_TRANSPORT');
+    expect((e as DotError).details.stage).toBe('connect');
+    expect(String((e as DotError).details.cause)).toContain('ENOTFOUND');
+    // A failed start must leave the feed restartable rather than "running but dead".
+    expect(feed.statsView().connected).toBe(false);
+  });
+
+  it('bounds a connect that never settles instead of stalling the daemon forever', async () => {
+    // Measured: pointed at a local plaintext HTTP/2 server, the vendored native client's
+    // connect() promise never resolved and the server received zero bytes. A watcher that
+    // hangs at start() is indistinguishable from one that is idle.
+    const fake: GeyserLike = {
+      connect: () => new Promise(() => {}),
+      subscribe: async () => ({ on: () => {}, destroy: () => {} }),
+    };
+    const feed = new YellowstoneUpgradeFeed({
+      endpoint: 'http://127.0.0.1:10000',
+      clientFactory: () => fake,
+      connectTimeoutMs: 120,
+    });
+    const t0 = Date.now();
+    const e = await feed.start().catch((x) => x);
+    expect(Date.now() - t0).toBeLessThan(3_000);
+    expect((e as DotError).details.stage).toBe('connect');
+    expect(String((e as DotError).details.cause)).toMatch(/no channel after 120ms/);
+  });
+
+  it('keeps the real client’s shape, so the seam cannot drift from the SDK again', async () => {
+    // The assertion that would have prevented the bug: the shipped client has connect(),
+    // and calling subscribe() without it fails locally rather than on the wire.
+    const ctor = Geyser.default as unknown as new (e: string, t: string | undefined, o: unknown) => Record<string, unknown>;
+    const client = new ctor('http://127.0.0.1:10000', undefined, undefined) as unknown as GeyserLike;
+    expect(typeof client.connect).toBe('function');
+    expect(typeof client.subscribe).toBe('function');
+    // `subscribe` is async, so the SDK's local guard rejects rather than throws — which is
+    // how it reached Dot's catch block as a "provider refused" error in the probe.
+    await expect(client.subscribe({} as never)).rejects.toThrow(/not connected/i);
+  });
+
+  it('surfaces a dropped stream with the provider’s reason, not an empty envelope', async () => {
+    const handlers: Record<string, (e: unknown) => void> = {};
+    const fake: GeyserLike = {
+      connect: async () => {},
+      subscribe: async () => {
+        return {
+          on: (ev: string, cb: (e: unknown) => void) => {
+            handlers[ev] = cb;
+          },
+          destroy: () => {},
+        } as never;
+      },
+    };
+    const feed = new YellowstoneUpgradeFeed({ endpoint: 'https://api.rpcpool.com', clientFactory: () => fake });
+    await feed.start();
+    const errs: DotError[] = [];
+    feed.on('error', (e: DotError) => errs.push(e));
+    handlers.error?.(new Error('subscribe stream receive failed'));
+    expect(errs).toHaveLength(1);
+    expect(errs[0]!.message).toContain('api.rpcpool.com');
+    expect(errs[0]!.details.cause).toBe('subscribe stream receive failed');
+    expect(feed.statsView().errors).toBe(1);
+    expect(feed.statsView().connected).toBe(false);
   });
 });
 
