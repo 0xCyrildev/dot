@@ -1,0 +1,381 @@
+{
+  "schema": "dot.report.v1",
+  "generatedAt": "2026-10-21T12:40:19.297Z",
+  "program": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+  "label": "LBU (Zeta/Kamino perps)",
+  "mode": "rules",
+  "programData": "HZcJwcJ2njPDxZtpPoKnF8v2w9QAx2rS7TdJPSRkbEhu",
+  "event": "upgrade",
+  "tier": "P3",
+  "score": 31,
+  "confidence": "low",
+  "components": [
+    {
+      "name": "authority_posture",
+      "points": 18,
+      "max": 18,
+      "why": "authority is a PDA: gated by code Dot has not reviewed"
+    },
+    {
+      "name": "change_magnitude",
+      "points": 10,
+      "max": 24,
+      "why": "bytecode size moved"
+    },
+    {
+      "name": "dependents",
+      "points": 0,
+      "max": 22,
+      "why": "0 direct, 0 transitive attributed callers"
+    },
+    {
+      "name": "cpi_volume",
+      "points": 0,
+      "max": 12,
+      "why": "0 attributed CPI occurrences in the sample"
+    },
+    {
+      "name": "value_routed",
+      "points": 0,
+      "max": 14,
+      "why": "0 lamports inbound-attributed across 0 mint(s)"
+    }
+  ],
+  "cappedBy": "only 0% of the planned sample was retrievable from the node",
+  "stoppedAt": "act",
+  "stopNote": "budget refuses any further signature pull (rpcCalls 13/40)",
+  "decision": {
+    "source": "rules",
+    "proceed": true,
+    "confidence": "medium",
+    "rationale": "authority is not classifiable from chain data alone — an unverified governance path is treated as unreviewed, not as safe; no prior graph for this program: blast radius is unobserved, which is not the same as zero",
+    "signals": {
+      "kind": "upgrade",
+      "authority_posture": "program_derived",
+      "bytecode_changed": true,
+      "authority_changed": false,
+      "size_changed": true,
+      "size_delta_pct": null,
+      "dependents_known": null,
+      "signatures_available": null,
+      "idl_available": false,
+      "forced": false
+    },
+    "plan": {
+      "signatures": 25,
+      "rpcCalls": 25,
+      "useLlm": false
+    },
+    "llmTokensUsed": 0
+  },
+  "blastRadius": {
+    "directCallers": 0,
+    "transitiveCallers": 0,
+    "edges": 0,
+    "cpiOccurrences": 0,
+    "failedCpiOccurrences": 0,
+    "lamportsRouted": 0,
+    "mintsTouched": 0,
+    "tracesAnalyzed": 0,
+    "tracesFailed": 0,
+    "attributionQuality": "stackHeight",
+    "historySpanDays": null,
+    "topDependents": [],
+    "transitiveByDepth": []
+  },
+  "graph": {
+    "target": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+    "nodes": [],
+    "edges": [],
+    "detailedEdges": [],
+    "nodeMeta": [],
+    "tracesAnalyzed": 0,
+    "tracesFailed": 0,
+    "attributionQuality": "stackHeight",
+    "flattenedFrames": 0,
+    "anomalies": []
+  },
+  "evidence": [
+    {
+      "id": "EV-1",
+      "kind": "posture",
+      "summary": "authority=JADaUV8kvDpDbJr55wxXJHVaBS3VCj8thZZHjfeuCVLd posture=program_derived bytecode=2229776B at offset 45 discriminant=3 layout=u64+option33 sha256=d296c6771cec9456…",
+      "ref": {
+        "program": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+      }
+    },
+    {
+      "id": "EV-2",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "2n9d9SLd9KWTB3j52Jstpwj5avPnJNxU9aSTmXw3pzbdAKXE6sHRS6jh9iuGJJ5Z8ry3RnPiuKEpbtRboHzJUQNi"
+      }
+    },
+    {
+      "id": "EV-3",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "31LwhZJK4xhi1HhBkARE3VzLbzTB3X6vC9ewqfsYNVwobkqMjAPpUMEPaBLE2bU6PgdiXctXvCKe56mTe8EDMQxQ"
+      }
+    },
+    {
+      "id": "EV-4",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "5MiK9AAz2rZ2NRtNb2wxjH8KsdD1EUsxF81AWqFDfpZMRa9mJf8paPGqk2V47FQXHUQLuP6NmcPHNVJGXjCcJc4x"
+      }
+    },
+    {
+      "id": "EV-5",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "23chVwBAh8hmg5qAoGjJgiryzkpRdHRw7udnucpJbyJCzTQcmjLrHVAhJhFztVYXvWjaLXhF4chr1dbjFijjRPmS"
+      }
+    },
+    {
+      "id": "EV-6",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "aB3D5DehwxGjnuboHDf5uCRruxsQAMpGrUyVf7fnJRhv4fXPpFASYa8FBpypTmC1rnmdDcyei7wP1fZ8G5zmzNQ"
+      }
+    },
+    {
+      "id": "EV-7",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "3sBAm87BdJaubw7shFJKKLLRd1GigZbk1uqRBrNsW4dzR25ZRZqK2kpnTREMcnu1YjanvvfoGnK6bD6TCxAMM8bN"
+      }
+    },
+    {
+      "id": "EV-8",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "41tzNzvkQmor66SGHr3q5EfMqAkSk7vUSgA3ahodVmHEFAn46tUHnDZPpyFnPrpMvScVWN5JmQMz2JRVVKPJpQ5x"
+      }
+    },
+    {
+      "id": "EV-9",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "ag8DVcxvvnrd1dh9Yb6McLkr5wSV4uWJ6uWPxeyTsLSgGmZV5opQy7jrvVeWMzrzA8HKk5GUWMVibjLH4Jgr2o7"
+      }
+    },
+    {
+      "id": "EV-10",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "25hVyA9UedAP7nUXgUJb3gKK5PViuodg9Cdo3LLj8EdQhwaD4dHYrW6N2xjS8jYN1HdEU2kV2Tp5gHXGLhQA3dPw"
+      }
+    },
+    {
+      "id": "EV-11",
+      "kind": "limit",
+      "summary": "getTransaction failed: {\"code\":\"RPC_JSONRPC\",\"message\":\"getTransaction: jsonrpc -32015 Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\",\"details\":{\"method\":\"getTransaction\",\"rpcCode\":-32015,\"rpcMessage\":\"Transaction version (1) is not supported by the requesting client. Please try the request again with the following configuration parameter: \\\"maxSupportedTransactionVersion\\\": 1\"}}",
+      "ref": {
+        "signature": "98vj95LpDLSeyFVBACe7KAZ7ACPDMTNcbnYxRKSecSvJgMz6YMUQ5oEQ1Mg2UUUgVqYXXSf1eWZ24QuAWGrf33p"
+      }
+    }
+  ],
+  "limits": [
+    {
+      "code": "NO_IDL_CONTRACT",
+      "title": "No IDL, no semantic claim",
+      "blind": "There is no mandatory on-chain IDL. Anchor programs may or may not publish one, the legacy `anchor:idl` PDA is version- and size-dependent, and non-Anchor programs frequently ship a binary with no interface at all. In `mode: real` the model then has nothing to read, and Dot must say so instead of paraphrasing a bytecode diff.",
+      "mitigation": "`--idl <path|url>` to supply a published IDL and a prior version for a real diff. Without it, `narrative.refused = \"idl_unavailable\"` appears in the report and the tier rests only on posture plus observed graph.",
+      "always": true
+    },
+    {
+      "code": "HISTORY_RETENTION",
+      "title": "Historical transactions are whatever the node kept",
+      "blind": "getTransaction returns null outside the node’s retention window. Public mainnet endpoints commonly retain on the order of days, not the chain’s full life, and the window is a BigTable/leader configuration Dot cannot read. A program whose integrators were busy in 2024 can show a small graph today because the 2024 traces are gone, not because nobody called it.",
+      "mitigation": "Run Dot continuously so the graph is built while the traces are still hot and persisted in Dot’s own store. For backfill, use a provider archive node, or `getBlock`/`getBlocks` streaming into your own indexer, or Yellowstone gRPC `subscribe` on transaction notifications, which is a live feed rather than a historical read.",
+      "always": true
+    },
+    {
+      "code": "NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION",
+      "title": "Core JSON-RPC has no \"every bytecode change\" feed",
+      "blind": "There is no `getProgramChanges` and `subscribe*` is per-account. Watching the whole upgradeable loader means polling `getProgramAccounts` on a program that owns >100k accounts, which providers gate, rate-limit or reject outright.",
+      "mitigation": "Watch an explicit target list with `accountSubscribe`/`getAccountInfo` (what Dot does by default). For chain-wide coverage you need Yellowstone gRPC (Geyser) with an `owner = BPFLoaderUpgradeable` account subscription, or a provider-side transaction webhook filtered on the loader id. Dot keeps the transport behind `RpcTransport` so a gRPC feed can be dropped in without touching the analyzer.",
+      "always": true
+    },
+    {
+      "code": "CPI_DEPTH_ATTRIBUTION",
+      "title": "innerInstructions is flat; depth is inferred, never given as a tree",
+      "blind": "`meta.innerInstructions[i]` maps a group of CPI instructions onto one outer instruction index, and the list inside the group has no parent pointers. At CPI depth >= 3 the caller of a nested call is not recoverable from the group alone. Measured on mainnet, instructions do carry `stackHeight` and `meta.logMessages` carries `Program <id> invoke [N]`, and Dot uses both — but `stackHeight` is absent from `@solana/web3.js` v1 type declarations and is not guaranteed by every node, and the log collector truncates.",
+      "mitigation": "Dot reports `attributionQuality`: `stackHeight` (exact), `logs` (exact, truncation-bounded) or `flat` (upper bound only, nested callers credited to the top-level program). For guaranteed depth-agnostic capture, parse a Yellowstone gRPC transaction stream, or record with an instrumented validator, since neither depends on the RPC’s log caps.",
+      "always": true
+    },
+    {
+      "code": "VALUE_IS_PROXY",
+      "title": "Value routed is an upper-bound proxy, per transaction, not per edge",
+      "blind": "Lamports move between accounts; nothing in the response says \"this transfer belongs to this CPI leg\". Dot sums positive balance deltas over the accounts a call touched, and takes token deltas from pre/postTokenBalances, which are per-transaction arrays. A swap through a router that touches six accounts is counted once on the receiving side, and cannot be split into legs.",
+      "mitigation": "Treat it as a ranking signal. For a settlement-grade number you need an account-level state diff per instruction, which means an instrumented node or an indexer that stores instruction-level balance changes.",
+      "always": true
+    },
+    {
+      "code": "PDA_HOLDINGS_NOT_ENUMERATED",
+      "title": "Program-held vaults are not enumerated",
+      "blind": "TVL sitting in a program’s PDAs is not visible from the transaction sample. There is no RPC that lists \"all token accounts owned by these PDAs\"; `getTokenAccountsByOwner` takes one owner at a time and `getProgramAccounts` on the token program with an owner filter is a full-program scan providers will not serve.",
+      "mitigation": "Compute vault balances from a known-PDA list (the IDL or the deployment repo gives you the seeds) via `getMultipleAccounts`, or use an indexer/DAS API. Dot leaves `blastRadius.lamportsRouted` explicitly labelled as routed-through value, not custody.",
+      "always": true
+    },
+    {
+      "code": "SIGNATURE_INDEX_IS_KEY_BASED",
+      "title": "getSignaturesForAddress matches keys, not roles",
+      "blind": "The index returns any transaction where the address appears as an account key: as the invoked program, as a CPI target, as a mint, as a PDA, as a token account. For an id that is also a commonly-referenced account, the sample fills up with transactions that have nothing to do with the program’s execution.",
+      "mitigation": "Filter on \"appears as a program id in an instruction\" during normalization, which Dot does by dropping frames whose program never actually ran. Sample size and `sampleCoverage` are reported so a reader can see how much of the window was noise.",
+      "always": true
+    },
+    {
+      "code": "NO_PRE_DEPLOY_ANALYSIS",
+      "title": "Dot sees landings, not intentions",
+      "blind": "An upgrade that has not been written to the ProgramData account does not exist for Dot. No propose-stage, no buffer-stage review, no source. This is a runtime blast-radius tool and is deliberately not a static analyzer of the bytecode about to be deployed.",
+      "mitigation": "Pair with a static analyzer on the Buffer account (`BPFLoaderUpgradeable` buffer stage) before `deploy`/`upgrade`; Dot’s `accountSubscribe` on the buffer PDA would be the natural trigger, and is not implemented in v0.1.",
+      "always": true
+    },
+    {
+      "code": "FINALITY_VS_LATENCY",
+      "title": "Finalized-only means slow-only",
+      "blind": "Dot reads at `finalized` because a graph built on `processed` data can be reorged out from under it. That costs minutes of detection latency, which matters if the upgrade you are watching is being exploited right now.",
+      "mitigation": "`--commitment confirmed` trades reorg risk for latency. Do not use `processed` for a persisted graph.",
+      "always": true
+    },
+    {
+      "code": "SINGLE_NODE_TRUST",
+      "title": "One RPC node is one point of failure and one point of view",
+      "blind": "A provider can cache, filter, lag, or serve you a node that is behind. Every number in a Dot report is a statement about what one endpoint chose to return. A quiet blast radius can mean a filtered node.",
+      "mitigation": "Run against two endpoints and diff the reports — Dot’s evidence ledger makes that diff mechanical. `rpc.rpcErrorCodes` and `pruned` counts are the first places to look.",
+      "always": true
+    },
+    {
+      "code": "NO_MALICE_DETECTION",
+      "title": "Dot ranks attention; it does not adjudicate guilt",
+      "blind": "Nothing here determines whether an upgrade is malicious. A P0 says \"posture and blast radius justify a human before the weekend\", and a P3 says \"the evidence Dot could gather does not\". Absence of a finding is not a clean bill of health, and the tier is a queue position, not a verdict.",
+      "mitigation": "Read the `components` array and the evidence ledger before escalating to anyone. If `cappedBy` is non-null, the tier is capped by a blind spot and the next step is a better data source, not a louder alarm.",
+      "always": true
+    },
+    {
+      "code": "HISTORY_RETENTION",
+      "title": "Historical transactions are whatever the node kept",
+      "blind": "getTransaction returns null outside the node’s retention window. Public mainnet endpoints commonly retain on the order of days, not the chain’s full life, and the window is a BigTable/leader configuration Dot cannot read. A program whose integrators were busy in 2024 can show a small graph today because the 2024 traces are gone, not because nobody called it.",
+      "mitigation": "Run Dot continuously so the graph is built while the traces are still hot and persisted in Dot’s own store. For backfill, use a provider archive node, or `getBlock`/`getBlocks` streaming into your own indexer, or Yellowstone gRPC `subscribe` on transaction notifications, which is a live feed rather than a historical read.",
+      "always": true
+    },
+    {
+      "code": "NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION",
+      "title": "Core JSON-RPC has no \"every bytecode change\" feed",
+      "blind": "There is no `getProgramChanges` and `subscribe*` is per-account. Watching the whole upgradeable loader means polling `getProgramAccounts` on a program that owns >100k accounts, which providers gate, rate-limit or reject outright.",
+      "mitigation": "Watch an explicit target list with `accountSubscribe`/`getAccountInfo` (what Dot does by default). For chain-wide coverage you need Yellowstone gRPC (Geyser) with an `owner = BPFLoaderUpgradeable` account subscription, or a provider-side transaction webhook filtered on the loader id. Dot keeps the transport behind `RpcTransport` so a gRPC feed can be dropped in without touching the analyzer.",
+      "always": true
+    },
+    {
+      "code": "CPI_DEPTH_ATTRIBUTION",
+      "title": "innerInstructions is flat; depth is inferred, never given as a tree",
+      "blind": "`meta.innerInstructions[i]` maps a group of CPI instructions onto one outer instruction index, and the list inside the group has no parent pointers. At CPI depth >= 3 the caller of a nested call is not recoverable from the group alone. Measured on mainnet, instructions do carry `stackHeight` and `meta.logMessages` carries `Program <id> invoke [N]`, and Dot uses both — but `stackHeight` is absent from `@solana/web3.js` v1 type declarations and is not guaranteed by every node, and the log collector truncates.",
+      "mitigation": "Dot reports `attributionQuality`: `stackHeight` (exact), `logs` (exact, truncation-bounded) or `flat` (upper bound only, nested callers credited to the top-level program). For guaranteed depth-agnostic capture, parse a Yellowstone gRPC transaction stream, or record with an instrumented validator, since neither depends on the RPC’s log caps.",
+      "always": true
+    },
+    {
+      "code": "NO_IDL_CONTRACT",
+      "title": "No IDL, no semantic claim",
+      "blind": "There is no mandatory on-chain IDL. Anchor programs may or may not publish one, the legacy `anchor:idl` PDA is version- and size-dependent, and non-Anchor programs frequently ship a binary with no interface at all. In `mode: real` the model then has nothing to read, and Dot must say so instead of paraphrasing a bytecode diff.",
+      "mitigation": "`--idl <path|url>` to supply a published IDL and a prior version for a real diff. Without it, `narrative.refused = \"idl_unavailable\"` appears in the report and the tier rests only on posture plus observed graph.",
+      "always": true
+    },
+    {
+      "code": "VALUE_IS_PROXY",
+      "title": "Value routed is an upper-bound proxy, per transaction, not per edge",
+      "blind": "Lamports move between accounts; nothing in the response says \"this transfer belongs to this CPI leg\". Dot sums positive balance deltas over the accounts a call touched, and takes token deltas from pre/postTokenBalances, which are per-transaction arrays. A swap through a router that touches six accounts is counted once on the receiving side, and cannot be split into legs.",
+      "mitigation": "Treat it as a ranking signal. For a settlement-grade number you need an account-level state diff per instruction, which means an instrumented node or an indexer that stores instruction-level balance changes.",
+      "always": true
+    },
+    {
+      "code": "PDA_HOLDINGS_NOT_ENUMERATED",
+      "title": "Program-held vaults are not enumerated",
+      "blind": "TVL sitting in a program’s PDAs is not visible from the transaction sample. There is no RPC that lists \"all token accounts owned by these PDAs\"; `getTokenAccountsByOwner` takes one owner at a time and `getProgramAccounts` on the token program with an owner filter is a full-program scan providers will not serve.",
+      "mitigation": "Compute vault balances from a known-PDA list (the IDL or the deployment repo gives you the seeds) via `getMultipleAccounts`, or use an indexer/DAS API. Dot leaves `blastRadius.lamportsRouted` explicitly labelled as routed-through value, not custody.",
+      "always": true
+    },
+    {
+      "code": "SIGNATURE_INDEX_IS_KEY_BASED",
+      "title": "getSignaturesForAddress matches keys, not roles",
+      "blind": "The index returns any transaction where the address appears as an account key: as the invoked program, as a CPI target, as a mint, as a PDA, as a token account. For an id that is also a commonly-referenced account, the sample fills up with transactions that have nothing to do with the program’s execution.",
+      "mitigation": "Filter on \"appears as a program id in an instruction\" during normalization, which Dot does by dropping frames whose program never actually ran. Sample size and `sampleCoverage` are reported so a reader can see how much of the window was noise.",
+      "always": true
+    },
+    {
+      "code": "NO_PRE_DEPLOY_ANALYSIS",
+      "title": "Dot sees landings, not intentions",
+      "blind": "An upgrade that has not been written to the ProgramData account does not exist for Dot. No propose-stage, no buffer-stage review, no source. This is a runtime blast-radius tool and is deliberately not a static analyzer of the bytecode about to be deployed.",
+      "mitigation": "Pair with a static analyzer on the Buffer account (`BPFLoaderUpgradeable` buffer stage) before `deploy`/`upgrade`; Dot’s `accountSubscribe` on the buffer PDA would be the natural trigger, and is not implemented in v0.1.",
+      "always": true
+    },
+    {
+      "code": "FINALITY_VS_LATENCY",
+      "title": "Finalized-only means slow-only",
+      "blind": "Dot reads at `finalized` because a graph built on `processed` data can be reorged out from under it. That costs minutes of detection latency, which matters if the upgrade you are watching is being exploited right now.",
+      "mitigation": "`--commitment confirmed` trades reorg risk for latency. Do not use `processed` for a persisted graph.",
+      "always": true
+    },
+    {
+      "code": "SINGLE_NODE_TRUST",
+      "title": "One RPC node is one point of failure and one point of view",
+      "blind": "A provider can cache, filter, lag, or serve you a node that is behind. Every number in a Dot report is a statement about what one endpoint chose to return. A quiet blast radius can mean a filtered node.",
+      "mitigation": "Run against two endpoints and diff the reports — Dot’s evidence ledger makes that diff mechanical. `rpc.rpcErrorCodes` and `pruned` counts are the first places to look.",
+      "always": true
+    },
+    {
+      "code": "NO_MALICE_DETECTION",
+      "title": "Dot ranks attention; it does not adjudicate guilt",
+      "blind": "Nothing here determines whether an upgrade is malicious. A P0 says \"posture and blast radius justify a human before the weekend\", and a P3 says \"the evidence Dot could gather does not\". Absence of a finding is not a clean bill of health, and the tier is a queue position, not a verdict.",
+      "mitigation": "Read the `components` array and the evidence ledger before escalating to anyone. If `cappedBy` is non-null, the tier is capped by a blind spot and the next step is a better data source, not a louder alarm.",
+      "always": true
+    }
+  ],
+  "budget": {
+    "limits": {
+      "maxRpcCalls": 40,
+      "maxLlmTokens": 20000,
+      "maxWallMs": 300000,
+      "maxSignatures": 10
+    },
+    "spent": {
+      "rpcCalls": 13,
+      "llmTokensSettled": 0,
+      "llmTokensReserved": 0,
+      "signatures": 10
+    },
+    "remaining": {
+      "rpcCalls": 27,
+      "llmTokens": 20000,
+      "signatures": 0,
+      "wallMs": 292780
+    },
+    "elapsedMs": 7220,
+    "stoppedBy": "budget exhausted during act"
+  },
+  "rpc": {
+    "calls": 13,
+    "retries": 1,
+    "pruned": 0,
+    "failed": 20,
+    "byMethod": {
+      "getAccountInfo": 2,
+      "getSignaturesForAddress": 1,
+      "getTransaction": 10
+    },
+    "rpcErrorCodes": {
+      "-32015": 10
+    }
+  },
+  "wallMs": 7222
+}
