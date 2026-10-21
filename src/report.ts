@@ -1,0 +1,178 @@
+import type { BudgetSnapshot } from './agent/budget.js';
+import type { Evidence } from './agent/evidence.js';
+import type { Graph } from './graph/builder.js';
+import type { RiskComponent, RiskTier } from './score/risk.js';
+import type { LimitNote } from './limits.js';
+import type { ClientStats } from './rpc/client.js';
+
+export type StageTrace = {
+  stage: 'perceive' | 'decide' | 'act' | 'evaluate' | 'report';
+  atMs: number;
+  note: string;
+  rpcCallsAfter: number;
+};
+
+export type Narrative = {
+  whatChanged: string;
+  likelyImpactOnCallers: string;
+  cannotDetermine: string;
+  cites: string[];
+  tokensUsed: number;
+  refused?: string;
+};
+
+export type DotReport = {
+  schema: 'dot.report.v1';
+  generatedAt: string;
+  program: string;
+  label?: string;
+  mode: 'rules' | 'real';
+  programData: string;
+  event: string;
+  tier: RiskTier;
+  score: number;
+  confidence: 'high' | 'medium' | 'low';
+  components: RiskComponent[];
+  cappedBy: string | null;
+  /** Which stage ended the run. `decide` means Dot declined to spend on a trace pull. */
+  stoppedAt: 'perceive' | 'decide' | 'act' | 'evaluate' | 'report';
+  stopNote: string;
+  decision: Record<string, unknown> | null;
+  blastRadius: {
+    directCallers: number;
+    transitiveCallers: number;
+    edges: number;
+    cpiOccurrences: number;
+    failedCpiOccurrences: number;
+    lamportsRouted: number;
+    mintsTouched: number;
+    tracesAnalyzed: number;
+    tracesFailed: number;
+    attributionQuality: 'stackHeight' | 'logs' | 'flat';
+    historySpanDays: number | null;
+    topDependents: Array<{ program: string; count: number; transactions: number; lamportsRouted: number }>;
+    transitiveByDepth: Array<{ depth: number; program: string; via: string; count: number; lamportsRouted: number }>;
+  } | null;
+  graph: Graph | null;
+  evidence: Evidence[];
+  limits: LimitNote[];
+  narrative?: Narrative;
+  budget: BudgetSnapshot;
+  rpc: ClientStats;
+  wallMs: number;
+};
+
+const SOL = 1_000_000_000;
+
+export function renderMarkdown(r: DotReport): string {
+  const L: string[] = [];
+  const tierFlag = r.tier === 'P0' ? ' ← act now' : '';
+  L.push(`# Dot · ${r.label ? `${r.label} · ` : ''}${r.program}`);
+  L.push('');
+  L.push(`**${r.tier}** (score ${r.score}/100, confidence ${r.confidence})${tierFlag} — event \`${r.event}\`, mode \`${r.mode}\`, run ended at \`${r.stoppedAt}\``);
+  if (r.cappedBy) L.push('');
+  if (r.cappedBy) L.push(`> Tier capped by a blind spot: ${r.cappedBy}`);
+  L.push('');
+  L.push(`ProgramData \`${r.programData}\``);
+  L.push('');
+
+  L.push('## Blast radius');
+  if (!r.blastRadius) {
+    L.push('');
+    L.push('Not measured — the run stopped before the trace pull. Nothing here should be read as "no dependents".');
+  } else {
+    const b = r.blastRadius;
+    L.push('');
+    L.push('| metric | value |');
+    L.push('| --- | --- |');
+    L.push(`| direct callers attributed | ${b.directCallers} |`);
+    L.push(`| transitive callers (≤3 hops) | ${b.transitiveCallers} |`);
+    L.push(`| edges | ${b.edges} |`);
+    L.push(`| CPI occurrences in sample | ${b.cpiOccurrences} (${b.failedCpiOccurrences} failed) |`);
+    L.push(`| traces analyzed | ${b.tracesAnalyzed} (${b.tracesFailed} transactions that failed outright) |`);
+    L.push(`| lamports inbound-attributed | ${b.lamportsRouted} (${(b.lamportsRouted / SOL).toFixed(3)} SOL) |`);
+    L.push(`| distinct mints touched | ${b.mintsTouched} |`);
+    L.push(`| attribution | \`${b.attributionQuality}\`${b.attributionQuality === 'flat' ? ' — dependent counts are an UPPER BOUND' : ''} |`);
+    L.push(`| history span of sample | ${b.historySpanDays === null ? 'unknown' : `${b.historySpanDays.toFixed(2)} days`} |`);
+    if (b.topDependents.length > 0) {
+      L.push('');
+      L.push('Top attributed callers:');
+      L.push('');
+      L.push('| caller | cpi | txs | lamports |');
+      L.push('| --- | ---: | ---: | ---: |');
+      for (const d of b.topDependents) L.push(`| \`${short(d.program)}\` | ${d.count} | ${d.transactions} | ${d.lamportsRouted} |`);
+    }
+    if (b.transitiveByDepth.filter((t) => t.depth > 1).length > 0) {
+      L.push('');
+      L.push('Transitive (who breaks if the thing that calls this breaks):');
+      for (const t of b.transitiveByDepth.filter((x) => x.depth > 1).slice(0, 10)) {
+        L.push(`- depth ${t.depth}: \`${short(t.program)}\` via \`${short(t.via)}\` (${t.count} CPI)`);
+      }
+    }
+  }
+
+  L.push('');
+  L.push('## Why this tier');
+  for (const c of r.components) L.push(`- **${c.name}** ${c.points}/${c.max} — ${c.why}`);
+
+  L.push('');
+  L.push('## Decision');
+  if (r.decision) {
+    const d = r.decision as Record<string, unknown>;
+    L.push(`source \`${String(d.source)}\`, proceed \`${String(d.proceed)}\`, plan \`${JSON.stringify(d.plan)}\``);
+    L.push(`> ${String(d.rationale)}`);
+    if (d.rejected) L.push(`LLM answer discarded: ${JSON.stringify(d.rejected)}`);
+  } else {
+    L.push('No decision record.');
+  }
+
+  if (r.narrative) {
+    L.push('');
+    L.push('## Model reading of the IDL diff');
+    if (r.narrative.refused) {
+      L.push(`No narrative produced (${r.narrative.refused}). ${r.narrative.cannotDetermine}`);
+    } else {
+      L.push(`- changed: ${r.narrative.whatChanged}`);
+      L.push(`- impact on callers: ${r.narrative.likelyImpactOnCallers}`);
+      L.push(`- **cannot determine: ${r.narrative.cannotDetermine}**`);
+      L.push(`- cites: ${r.narrative.cites.join(', ')} (${r.narrative.tokensUsed} tokens)`);
+    }
+  }
+
+  L.push('');
+  L.push('## Budget');
+  const s = r.budget;
+  L.push('');
+  L.push('| | spent | limit |');
+  L.push('| --- | ---: | ---: |');
+  L.push(`| RPC calls | ${s.spent.rpcCalls} | ${s.limits.maxRpcCalls} |`);
+  L.push(`| signatures | ${s.spent.signatures} | ${s.limits.maxSignatures} |`);
+  L.push(`| LLM tokens | ${s.spent.llmTokensSettled} | ${s.limits.maxLlmTokens} |`);
+  L.push(`| wall | ${s.elapsedMs}ms | ${s.limits.maxWallMs}ms |`);
+  L.push('');
+  L.push(`RPC: ${r.rpc.calls} calls (${r.rpc.retries} retries, ${r.rpc.pruned} pruned reads, ${r.rpc.failed} failures)`);
+
+  L.push('');
+  L.push('## Evidence');
+  for (const e of r.evidence) L.push(`- \`${e.id}\` [${e.kind}] ${e.summary}`);
+
+  L.push('');
+  L.push('## What Dot could not see');
+  for (const lim of r.limits) {
+    L.push('');
+    L.push(`### ${lim.title}`);
+    L.push(`_${lim.blind}_`);
+    L.push(`→ ${lim.mitigation}`);
+  }
+
+  L.push('');
+  L.push('---');
+  L.push(
+    `Dot ranks where a human should look first. It does not establish that this upgrade is malicious, and a low tier is a statement about the evidence Dot was able to gather — not an absence of risk. Generated ${r.generatedAt}.`,
+  );
+  return L.join('\n');
+}
+
+function short(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
+}

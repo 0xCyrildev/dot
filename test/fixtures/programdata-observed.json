@@ -1,0 +1,49 @@
+{
+  "provenance": "api.mainnet-beta.solana.com getAccountInfo(base64), 2026-10-21, first 45 bytes of each ProgramData account",
+  "accounts": [
+    {
+      "program": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+      "programData": "HZcJwcJ2njPDxZtpPoKnF8v2w9QAx2rS7TdJPSRkbEhu",
+      "accountLen": 2229821,
+      "headBase64": "AwAAAKZiRRkAAAAAAf7zIERSwsjzdXXYp+ML0Up9cSrp+/GpLweE+SsvY2H6f0VMRg==",
+      "expect": {
+        "discriminant": 3,
+        "bytecodeOffset": 45,
+        "authority": "JADaUV8kvDpDbJr55wxXJHVaBS3VCj8thZZHjfeuCVLd",
+        "headerU64": 423977638
+      }
+    },
+    {
+      "program": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+      "programData": "PwDiXFxQsGra4sFFTT8r1QWRMd4vfumiWC1jfWNfdYT",
+      "accountLen": 794036,
+      "headBase64": "AwAAALhnsRYAAAAAAFG03loGGVda2wTEOYeGSKyBSH6FKc3tKx/MtVEV73JHf0VMRg==",
+      "expect": {
+        "discriminant": 3,
+        "bytecodeOffset": 45,
+        "authority": null,
+        "headerU64": 380725176
+      }
+    }
+  ],
+  "programPointers": [
+    {
+      "program": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+      "discriminant": 2,
+      "accountLen": 36,
+      "pointsTo": "HZcJwcJ2njPDxZtpPoKnF8v2w9QAx2rS7TdJPSRkbEhu"
+    },
+    {
+      "program": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "discriminant": 2,
+      "accountLen": 36,
+      "pointsTo": "B5MvUwXdiW1NMM6QFFD3ssPKBujD4zMohncbM73Z2BQu"
+    },
+    {
+      "program": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+      "discriminant": 2,
+      "accountLen": 36,
+      "pointsTo": "PwDiXFxQsGra4sFFTT8r1QWRMd4vfumiWC1jfWNfdYT"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "program": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+    "label": "LBU (perps)",
+    "knownMultisigs": ["JADaUV8kvDpDbJr55wxXJHVaBS3VCj8thZZHjfeuCVLd"]
+  },
+  {
+    "program": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "label": "pump"
+  },
+  {
+    "program": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+    "label": "token metadata (authority renounced)"
+  }
+]

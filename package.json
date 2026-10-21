@@ -1,0 +1,53 @@
+{
+  "name": "dot-blast-radius",
+  "version": "0.1.0",
+  "description": "Agentic Solana blast-radius analyzer: watches BPFLoaderUpgradeable upgrades and rebuilds the on-chain CPI supply chain from execution traces.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "dot": "./dist/cli/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./limits": "./dist/limits.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dot": "node --import tsx src/cli/index.ts",
+    "mcp": "node --import tsx src/mcp/server.ts"
+  },
+  "keywords": [
+    "solana",
+    "blast-radius",
+    "cpi",
+    "upgrade",
+    "agent",
+    "security",
+    "mcp"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@solana/web3.js": "^1.99.0",
+    "bs58": "^6.0.0",
+    "commander": "^12.1.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
