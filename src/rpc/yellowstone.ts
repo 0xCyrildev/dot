@@ -30,7 +30,7 @@ import { DotError } from '../errors.js';
  *  - The `Program`/`ProgramData` *and* the loader's `Buffer` accounts all arrive.
  *    A Buffer with a staged program in it is an upgrade that has not landed yet,
  *    so Dot can see the proposal, not just the landing. That narrows the
- *    `NO_PRE_DEPLOY_ANALYSIS` limit rather than merely documenting it.
+ *    the `NO_PRE_DEPLOY_ANALYSIS` limit into `PRE_DEPLOY_PARTIAL`.
  *  - No `getAccountInfo` per target per tick. The feed costs zero JSON-RPC calls,
  *    which is what makes a chain-wide watcher budget-feasible at all.
  *

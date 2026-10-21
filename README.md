@@ -391,7 +391,7 @@ prose in a README, so a report can name the ones that actually applied to it.
 | `ADDRESS_TABLE_RESOLUTION` | Wrong v0 key composition misattributes edges silently. `keys.method` is reported. |
 | `BLOCK_FETCH_AMPLIFICATION` | Batching cuts calls and multiplies bytes; the model is labelled until you calibrate it. |
 | `FEED_BACKPRESSURE` | Under a storm the dispatcher drops events. Dropped has a counter; it is not clean. |
-| `NO_PRE_DEPLOY_ANALYSIS` | Dot sees landings. The Geyser `Buffer` account gives a *staged* signal, not an analysis. |
+| `PRE_DEPLOY_PARTIAL` | Narrowed: `STAGED_UPGRADE` now fires when an image is uploaded but not yet live, with hash, size and staging authority. Still unseen: what the image *does*, the program it belongs to until it lands, and any governance delay — `finalizeEta` says `immediate_unless_governed` rather than inventing one. |
 | `FINALITY_VS_LATENCY` | Reads are `finalized`, which costs minutes of detection. |
 | `ENDPOINT_CORROBORATION` | Comparison is only valid same-slot; a lone live endpoint is `single_source`, not verified. |
 | `NO_MALICE_DETECTION` | A tier is a queue position. Absence of a finding is not a clean bill of health. |

@@ -10,7 +10,7 @@ export type LimitCode =
   | 'FAILED_TRANSACTIONS_ROLLED_BACK'
   | 'SIGNATURE_INDEX_IS_KEY_BASED'
   | 'ADDRESS_TABLE_RESOLUTION'
-  | 'NO_PRE_DEPLOY_ANALYSIS'
+  | 'PRE_DEPLOY_PARTIAL'
   | 'FINALITY_VS_LATENCY'
   | 'SINGLE_NODE_TRUST'
   | 'NO_MALICE_DETECTION'
@@ -177,12 +177,12 @@ export const LIMIT_NOTES: LimitNote[] = [
     always: false,
   },
   {
-    code: 'NO_PRE_DEPLOY_ANALYSIS',
-    title: 'Dot sees landings, not intentions',
+    code: 'PRE_DEPLOY_PARTIAL',
+    title: 'Dot sees that an image is staged; it does not see what the image does',
     blind:
-      'A bytecode change that has not been written on chain does not exist for Dot: no propose-stage review, no repository, no CI signal. It is a runtime tool, deliberately not a static analyzer of what is about to be deployed.',
+      'Narrowed, not closed. The loader’s staging `Buffer` account is visible to the Geyser owner filter, so `dot watch --yellowstone` now emits `STAGED_UPGRADE` with the image hash, size and staging authority, and `STAGED-NOOP` when the bytes already match what is live. What remains unseen: without a published IDL pair there is no semantic reading of the staged image, no source, no repository, and no CI signal. A `Buffer` account also **names no program** — `upgrade` receives the program as a transaction argument — so attribution is deferred until the bytes land, and Dot marks it `UNATTRIBUTED` rather than guessing. There is likewise no protocol-level timelock to read: the loader applies new bytecode on the upgrade transaction itself, so `finalizeEta` reports `immediate_unless_governed` unless the operator declares a delay via `--timelock-ms`. An invented ETA would be the most dangerous number in this tool, because it is the one an operator would schedule against.',
     mitigation:
-      'Partly narrowed: the Geyser owner filter also catches the loader’s `Buffer` accounts, so `dot watch --yellowstone` prints a `STAGED` line when a program is being uploaded before it lands — an early trigger, not an analysis. Pair it with a static analyzer on the staged bytes.',
+      'Supply `--idl`/`--prior-idl` so `mode: real` can read the delta; pair the staged signal with a static analyzer on the staged bytes. Run Dot long enough for bytecode-hash landing to attribute earlier stages, and record `pending()` to see how many images are still unattributed.',
     always: true,
   },
   {

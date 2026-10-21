@@ -16,6 +16,7 @@ import { BPF_LOADER_UPGRADEABLE } from '../ids.js';
 import type { AccountUpdate } from '../rpc/yellowstone.js';
 import type { ObservedState as ObservedStateLike } from '../watcher/watcher.js';
 import { YellowstoneUpgradeFeed } from '../rpc/yellowstone.js';
+import { StagedUpgradeDetector } from '../state/preDeploy.js';
 import { ResilientClient } from '../rpc/resilient.js';
 import { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
 import { resolveIdl } from '../idl.js';
@@ -220,9 +221,10 @@ program
   .option('--yellowstone <url>', 'chain-wide feed from a Yellowstone/Geyser endpoint instead of polling the target list')
   .option('--yellowstone-token <token>', 'auth token for the gRPC endpoint (or DOT_YELLOWSTONE_TOKEN); never echoed')
   .option('--authority <pubkey>', 'server-side filter to one upgrade authority (memcmp at the measured offset)')
+  .option('--timelock-ms <ms>', 'declare a governance delay; Dot cannot read one off chain and will not invent one')
   .option('--per-event-rpc <n>', 'max RPC calls for any single upgrade investigation', '50')
   .option('--daily-rpc <n>', 'max RPC calls the daemon may spend before it starts dropping events', '5000')
-  .action(async (opts: GlobalOpts & { targets: string; interval: string; transport: string; once?: boolean; fireOnBaseline?: boolean; state?: string; yellowstone?: string; yellowstoneToken?: string; authority?: string; perEventRpc: string; dailyRpc: string }) => {
+  .action(async (opts: GlobalOpts & { targets: string; interval: string; transport: string; once?: boolean; fireOnBaseline?: boolean; state?: string; yellowstone?: string; yellowstoneToken?: string; authority?: string; timelockMs?: string; perEventRpc: string; dailyRpc: string }) => {
     const targets: WatchTarget[] = JSON.parse(await readFile(opts.targets, 'utf8'));
     if (!Array.isArray(targets) || targets.length === 0) {
       process.stderr.write('error: targets file must be a non-empty JSON array\n');
@@ -260,6 +262,9 @@ program
     // ---- Chain-wide mode. The target list becomes a fallback, not the design.
     if (opts.yellowstone) {
       const index = new ProgramIndex(daemonClient, daemonBudget);
+      const stagedDetector = new StagedUpgradeDetector({
+        declaredDelayMs: opts.timelockMs ? Number(opts.timelockMs) : null,
+      });
       const lastSeen = new Map<string, ObservedStateLike>();
       let unresolved = 0;
       let decoded = 0;
@@ -329,8 +334,21 @@ program
         ...(opts.authority ? { authorityPubkey: opts.authority } : {}),
       });
       feed.on('pointer', (p: { programData: string; program: string }) => index.observePointer(p.programData, p.program));
-      feed.on('buffer', (u: { address: string; slot: number }) => {
-        process.stdout.write(`STAGED ${u.address} slot=${u.slot} (a Buffer write is an upgrade that has not landed)\n`);
+      feed.on('buffer', (u: AccountUpdate) => {
+        // A Buffer write is the only moment before a change is live that an operator
+        // can still react. Dot reports that an image exists; it does not claim to know
+        // what the image does.
+        const ev = stagedDetector.observeStaged(u);
+        if (ev === null) {
+          process.stdout.write(`STAGED-NOOP ${u.address} slot=${u.slot} (staged image is byte-identical to what is live)\n`);
+          return;
+        }
+        const eta = ev.finalizeEta;
+        process.stdout.write(
+          `STAGED_UPGRADE buffer=${u.address} slot=${u.slot} image=${ev.staged.bytecodeLen}B ` +
+            `sha256=${ev.staged.bytecodeHash.slice(0, 16)}… authority=${ev.staged.authority ?? 'none'} ` +
+            `program=${ev.program ?? 'UNATTRIBUTED'} eta=${eta.status}${eta.delayMs !== null ? ` (${eta.delayMs}ms)` : ''}\n`,
+        );
       });
       feed.on('account', async (u: AccountUpdate) => {
         const resolved = await index.resolve(u.address, u.txnSignature);
@@ -347,6 +365,14 @@ program
           return;
         }
         decoded++;
+        stagedDetector.observeDeployed(u.address, state.bytecodeHash, state.bytecodeLen);
+        const attributed = stagedDetector.attributeByLanding(state.bytecodeHash, resolved.program);
+        if (attributed) {
+          process.stdout.write(
+            `LANDED staged buffer=${attributed.bufferAddress} -> program=${resolved.program} ` +
+              `(attribution by bytecode-hash match; the Buffer account itself names no program)\n`,
+          );
+        }
         const before = lastSeen.get(u.address) ?? null;
         const now: ObservedStateLike = {
           programData: u.address,
