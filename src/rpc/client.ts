@@ -318,6 +318,26 @@ export class SolanaClient {
   }
 
   /**
+   * Token-program accounts in `jsonParsed`, chunked. One call per chunk is the
+   * difference between a budgetable vault sweep and one call per PDA.
+   */
+  async getMultipleAccountsParsed(addresses: string[]): Promise<Array<{ lamports: number; owner: string; parsedInfo?: Record<string, unknown> } | null>> {
+    const res = await this.call<WithContext<Array<WireAccountState<unknown> | null>>>('getMultipleAccounts', [
+      addresses,
+      { encoding: 'jsonParsed', commitment: this.commitment },
+    ]);
+    return (res?.value ?? []).map((value) => {
+      if (!value) return null;
+      const data = value.data as unknown;
+      const info =
+        data && typeof data === 'object' && 'parsed' in data
+          ? ((data as { parsed: { info?: unknown } }).parsed?.info as Record<string, unknown> | undefined)
+          : undefined;
+      return { lamports: value.lamports, owner: value.owner, ...(info ? { parsedInfo: info } : {}) };
+    });
+  }
+
+  /**
    * One call, one whole block. This is the batching lever: the RPC *call* count
    * stops scaling with transactions. The byte count scales the other way, which is
    * why `plan()` in `src/graph/batcher.ts` reports both and does not assume the

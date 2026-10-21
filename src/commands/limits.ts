@@ -210,13 +210,13 @@ export const LIMIT_STATUS: LimitStatus[] = [
   },
   {
     code: 'PDA_HOLDINGS_NOT_ENUMERATED',
-    state: 'UNRESOLVABLE_IN_CODE',
+    state: 'NARROWED',
     change:
-      'Routed value is labelled as routed, never as custody, so a small graph cannot be misread as a small stake.',
+      'Routed value is still labelled as routed, never as custody. Additionally `--seeds` now derives PDAs from an operator-declared seed list, reads them in getMultipleAccounts chunks of up to 100, and sums lamports and raw token units per mint, with typed seed encodings (u8:1 vs the character "1") handled explicitly.',
     remains:
-      'No RPC lists all token accounts owned by a program’s PDAs, and the seeds live in source the publisher need not share. A seed list is external configuration; with it Dot could sum holdings, without it the number is unknown rather than zero.',
-    tests: [],
-    fix: 'Supply PDA seeds from the deployment repo, or use an indexer/DAS API. See docs/blocked.md for why the --seeds path is not in this build.',
+      'Only declared patterns are read. The seeds live in the deployment repo and a publisher who does not share them has, by construction, no observable custody — `unresolvedSeeds`, `accountsEmpty` and `complete:false` are reported so an absent figure is never shown as a zero one. No USD value is printed: there is no price oracle.',
+    tests: ['test/seeds.test.ts'],
+    fix: 'Publish the seed patterns in the deployment repo, or use an indexer/DAS API for programs that will not.',
   },
 ];
 

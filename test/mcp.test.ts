@@ -13,7 +13,9 @@ import { createInterface } from 'node:readline';
  * JSON-RPC message**, diagnostics included — which is why they must go to stderr.
  */
 
-const BIN = 'dist/cli/index.js';
+// Run from source, not dist: install.test.ts runs `npm run build` in parallel with
+// this suite, and a spawn racing a rebuild is a flake that teaches nothing.
+const ENTRY = 'src/cli/index.ts';
 let child: ChildProcessWithoutNullStreams;
 const stdoutLines: string[] = [];
 const stderrText: string[] = [];
@@ -37,7 +39,7 @@ function request(id: number, method: string, params: Record<string, unknown> = {
 }
 
 beforeAll(async () => {
-  child = spawn('node', [BIN, 'mcp'], { cwd: process.cwd(), env: { ...process.env, NO_COLOR: '1' } });
+  child = spawn('node', ['--import', 'tsx', ENTRY, 'mcp'], { cwd: process.cwd(), env: { ...process.env, NO_COLOR: '1' } });
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (c: string) => stderrText.push(c));
   const rl = createInterface({ input: child.stdout });

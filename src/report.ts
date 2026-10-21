@@ -80,6 +80,8 @@ export type DotReport = {
   };
   limits: LimitNote[];
   narrative?: Narrative;
+  /** Custody from operator-declared seeds, when --seeds was supplied. Absent means unobserved, not zero. */
+  holdings?: { observedLamports: number; observedTokenRaw: Record<string, string>; accountsRead: number; accountsEmpty: number; unresolvedSeeds: unknown[]; stoppedReason: string | null; complete: boolean; source: string };
   budget: BudgetSnapshot;
   rpc: ClientStats;
   wallMs: number;

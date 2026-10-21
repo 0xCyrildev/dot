@@ -27,6 +27,9 @@ Not done as a result:
   `defaults_unverified`.
 - `dot blast-radius` has never seen a real loader history, so its ranking model is
   tested only against constructed fixtures.
+- `dot analyze --seeds` has summed no real vault. The derivation is proven against a
+  captured mainnet ProgramData PDA (`test/seeds.test.ts`), but no balance read has run
+  against a live node.
 - `dot analyze <Jupiter>` for the demo graph. The only real mainnet artifact in the
   repo is `docs/live-run-2026-10-21.json`, captured before these features existed and
   from the endpoint that then went on to refuse history.

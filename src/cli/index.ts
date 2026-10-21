@@ -21,6 +21,7 @@ import { StagedUpgradeDetector } from '../state/preDeploy.js';
 import { ResilientClient } from '../rpc/resilient.js';
 import { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
 import { resolveIdl } from '../idl.js';
+import { loadSeedFile, renderHoldings, sumHoldings } from '../state/seeds.js';
 import { formatEscalation, renderMarkdown, type DotReport } from '../report.js';
 import { BlastRadiusScanner, renderBlastRadius, loadProgramList, loadAuthorityMap } from '../commands/blastRadius.js';
 import { LIMIT_NOTES } from '../limits.js';
@@ -169,16 +170,17 @@ program
   .option('--cost-model <file>', 'calibration JSON from `dot calibrate`')
   .option('--depth <n>', 'transitive dependent hops to report', '3')
   .option('--sol-usd <price>', 'operator-supplied SOL price; Dot has no price oracle and will not invent a USD figure')
+  .option('--seeds <file>', 'JSON list of {program_id, seed_template, account_type} to sum custody from derived PDAs')
   .option('--label <label>', 'human name for reports')
   .option('--format <fmt>', 'json | md | both', 'both')
   .option('--out <dir>', 'write report files into this directory instead of stdout')
-  .action(async (programId: string, opts: GlobalOpts & { label?: string; forceFullTrace?: boolean }) => {
+  .action(async (programId: string, opts: GlobalOpts & { label?: string; forceFullTrace?: boolean; seeds?: string }) => {
     if (!isWellFormedPubkey(programId)) {
       process.stderr.write(`error: ${programId} is not a 32-byte base58 address\n`);
       process.exitCode = 2;
       return;
     }
-    const { scout, budget } = await build(opts);
+    const { client, scout, budget } = await build(opts);
     let report: DotReport;
     try {
       report = await scout.run({
@@ -194,6 +196,12 @@ program
         return;
       }
       throw e;
+    }
+    if (opts.seeds) {
+      const specs = await loadSeedFile(opts.seeds);
+      const holdings = await sumHoldings(client, specs);
+      report.holdings = { ...holdings, observedTokenRaw: Object.fromEntries([...holdings.observedTokenRaw].map(([k, v]) => [k, v.toString()])), source: opts.seeds };
+      process.stdout.write(`${renderHoldings(programId, holdings)}\n`);
     }
     await emit(report, opts);
     const escalation = formatEscalation(report);
@@ -602,10 +610,11 @@ program
   .option('--daily-rpc <n>', 'total ceiling for the whole query', '1200')
   .option('--authority-map <file>', 'JSON {authority: {label} or {m,n}}; threshold structure is not readable from chain data')
   .option('--sol-usd <price>', 'operator-supplied price; no oracle, no invented USD')
+  .option('--seeds <file>', 'JSON seed list; custody summed from derived PDAs for whatever it covers')
   .option('--depth <n>', 'transitive hops', '2')
   .option('--format <fmt>', 'json | md | both', 'both')
   .option('--out <dir>', 'write report files here')
-  .action(async (opts: { since?: string; minValue: string; minDependents: string; programs?: string; maxRecords: string; perProgramRpc: string; dailyRpc: string; authorityMap?: string; solUsd?: string; depth: string; format: string; out?: string; rpc?: string; commitment?: string }) => {
+  .action(async (opts: { since?: string; minValue: string; minDependents: string; programs?: string; maxRecords: string; perProgramRpc: string; dailyRpc: string; authorityMap?: string; solUsd?: string; seeds?: string; depth: string; format: string; out?: string; rpc?: string; commitment?: string }) => {
     const o = opts as GlobalOpts & typeof opts;
     const { client } = await build({ ...o, commitment: o.commitment ?? 'finalized', sample: o.perProgramRpc });
     const spent = { total: 0 };

@@ -142,11 +142,11 @@ export const LIMIT_NOTES: LimitNote[] = [
   },
   {
     code: 'PDA_HOLDINGS_NOT_ENUMERATED',
-    title: 'Program-held vaults are not enumerated',
+    title: 'Program-held vaults are only enumerable with a declared seed list',
     blind:
-      'TVL sitting in a program’s PDAs is not visible from the transaction sample. There is no RPC that lists "all token accounts owned by these PDAs"; `getTokenAccountsByOwner` takes one owner at a time and `getProgramAccounts` on the token program with an owner filter is a full-program scan providers will not serve.',
+      'TVL sitting in a program’s PDAs is not visible from the transaction sample, and the seeds that derive those PDAs live in the deployment repo. Dot can only read custody for seed patterns an operator has declared; for everyone else the figure stays unknown, and unknown is printed as unknown. Typed seeds matter too: the encoding `u8:0` is the byte 0x00, and hashing the ASCII character for zero instead derives a different address that resolves to nothing.',
     mitigation:
-      'Compute vault balances from a known-PDA list (the IDL or the deployment repo gives you the seeds) via `getMultipleAccounts`, or use an indexer/DAS API. Dot leaves `blastRadius.lamportsRouted` explicitly labelled as routed-through value, not custody.',
+      '`--seeds seeds.example.json` derives each PDA, reads them in `getMultipleAccounts` chunks of up to 100, and sums lamports plus raw token units per mint. It reports unresolved seed variables, absent accounts and an incomplete sweep separately — see `renderHoldings`, which refuses to print a USD figure and states that absence is not zero holdings.',
     always: true,
   },
   {

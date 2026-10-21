@@ -1,0 +1,20 @@
+[
+  {
+    "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+    "seed_template": ["vault"],
+    "account_type": "SPL",
+    "label": "single vault seed named by the operator"
+  },
+  {
+    "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+    "seed_template": ["pool", "u8:0"],
+    "account_type": "SPL",
+    "label": "pool 0 — note u8:0 is the byte 0x00, not the character '0'"
+  },
+  {
+    "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "seed_template": ["$user"],
+    "account_type": "SPL",
+    "label": "unresolvable without a per-user value; Dot will report it, not guess"
+  }
+]
