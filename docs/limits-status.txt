@@ -1,0 +1,118 @@
+Limit status — 5 RESOLVED, 7 NARROWED, 8 UNRESOLVABLE_IN_CODE (20 codes)
+
+## RESOLVED
+NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION
+  fixed: src/rpc/yellowstone.ts subscribes by owner over Geyser, so every ProgramData write on the cluster is observed with no target list and no JSON-RPC polling.
+  remains: Requires a Yellowstone/Geyser endpoint, which is a paid or self-run dependency. Core JSON-RPC still cannot do this.
+  fix:     Run against any Geyser provider, or run your own validator with the plugin.
+  tests:   test/transports.test.ts, test/yellowstone-live.test.ts
+
+ADDRESS_TABLE_RESOLUTION
+  fixed: src/graph/keys.ts handles both compositions — node-inlined lookupTable keys and static+loaded-writable+loaded-readonly — and reports which one it used, plus any index it could not place.
+  remains: A node that omits loadedAddresses entirely produces unresolvedIndexes rather than a wrong graph; the analysis is then partial and labelled.
+  tests:   test/graph.test.ts, test/normalize.test.ts
+
+WEB3JS_JSONPARSED_VALIDATOR
+  fixed: Dot does not route reads through @solana/web3.js, so the StructError on parsed inner instructions cannot occur. The wire types in src/rpc/wire.ts model accounts as optional and stackHeight as present-optional.
+  remains: The upstream bug is unfixed and still bites anyone who follows the documented path; the repro is recorded in the limit note so it is not rediscovered.
+  fix:     Nothing in Dot to do. Upstream issue, not a Dot limitation.
+  tests:   test/graph.test.ts, test/normalize.test.ts
+
+FAILED_TRANSACTIONS_ROLLED_BACK
+  fixed: Failed frames and failed transactions are counted separately and contribute zero to every value field, so a rolled-back CPI cannot inflate routed value.
+  remains: A CPI that failed inside a successful transaction proves attempted integration, not intent; that inference is still a human call.
+  tests:   test/graph.test.ts
+
+ENDPOINT_CORROBORATION
+  fixed: ResilientClient compares same-slot reads and returns five distinct verdicts (agreed / disagreed / slot_mismatch / single_source / both_failed), and the verdict is carried in every report rather than only on a halt.
+  remains: Two endpoints from the same provider agreeing is not corroboration. Dot records endpoint labels but cannot tell you they share an upstream.
+  fix:     Use endpoints from different providers, not just different URLs.
+  tests:   test/transports.test.ts, test/scout.test.ts
+
+## NARROWED
+GRPC_LIVE_PATH_MOCKED
+  narrowed: Raw protobuf frames built with the package’s own generated codec, carrying a captured mainnet ProgramData account, are decoded by the feed and still yield the correct upgrade authority. The message shape is no longer assumed.
+  remains: HTTP/2 handshake, x-token auth, isReplay semantics, keepalive and reconnect are below the seam any offline test reaches. `--authority` server-side filtering is untested against a real node’s filter implementation.
+  fix:     Set YELLOWSTONE_ENDPOINT to run the gated live test, then read feed.statsView() against a real stream.
+  tests:   test/yellowstone-live.test.ts
+
+PRE_DEPLOY_PARTIAL
+  narrowed: STAGED_UPGRADE fires when a loader Buffer account receives an image that is not what is live, with bytecode hash, size, offset and staging authority; STAGED-NOOP fires when the bytes already match production; landing attributes the staged image by bytecode-hash match.
+  remains: Dot sees that an image exists, not what it does — an IDL pair can narrow that, and only if the publisher released one. A Buffer account names no program, so attribution is deferred until the bytes land. There is no protocol-level timelock to read, so finalizeEta is immediate_unless_governed unless an operator declares a delay.
+  !deviation from plan: The plan called for this to be marked RESOLVED. It is not: the semantic content of a staged image is still invisible, and reporting a staged upgrade as fully analysed would be exactly the false all-clear this taxonomy exists to prevent.
+  tests:   test/predeploy.test.ts
+
+SINGLE_NODE_TRUST
+  narrowed: --secondary-rpc reads the load-bearing account from two endpoints at the same slot and halts on contradiction; each endpoint carries its own budget so a retry on one cannot spend the other’s.
+  remains: Corroboration covers the one read that triggers the run. Trace fetches, signature walks and block reads still come from a single endpoint, which can filter or cache them without contradiction.
+  fix:     Point every read at a quorum, or diff two full reports.
+  tests:   test/transports.test.ts, test/scout.test.ts
+
+CPI_DEPTH_ATTRIBUTION
+  narrowed: stackHeight is used when present, the log tree when it is not, and the two are cross-checked — disagreement is reported as evidence a provider is filtering one view. Flat attribution still produces a graph but is labelled as an upper bound.
+  remains: Both sources are optional on the wire and the log collector truncates, so a deep call chain on a filtered node can still be flattened. Guaranteed depth-agnostic capture needs a transaction-level feed or an instrumented validator.
+  tests:   test/normalize.test.ts
+
+PARSED_INSTRUCTION_ACCOUNTS
+  narrowed: Parsed instructions have no accounts array, so the key table is searched inside parsed.info and every frame records accountSource: accounts | parsed_info | none. Heuristic-derived numbers cannot outlive their tag.
+  remains: Field naming inside parsed.info is inconsistent across programs, so recovery is best-effort; an instruction that names no recoverable account contributes no value.
+  tests:   test/normalize.test.ts, test/graph.test.ts
+
+SIGNATURE_INDEX_IS_KEY_BASED
+  narrowed: The index returns transactions where the id appears in any role; Dot only credits a program with a call it actually executed, and reports sampleCoverage so noise in the window is visible.
+  remains: A sample can still be dominated by transactions where the id is a mint or a token account, which lowers coverage rather than producing a wrong edge.
+  tests:   test/scout.test.ts
+
+PROGRAMDATA_REVERSE_LOOKUP
+  narrowed: ProgramIndex resolves a ProgramData address to its program three ways and stamps which one worked: observed pointer accounts (free), the writing transaction plus local PDA re-derivation (one call, exact), or a reverse getProgramAccounts scan.
+  remains: A fresh daemon with no pointer history and a provider that gates getProgramAccounts can still see an upgrade it cannot name. Those events are counted in `unresolved`, never guessed at.
+  tests:   test/transports.test.ts
+
+## UNRESOLVABLE_IN_CODE
+HISTORY_RETENTION
+  not a code problem: Dot cannot fix this and does not pretend to. Retention is a BigTable/provider decision; the only thing code can do is classify `-32015` as missing history instead of as a fetch error, and cap the tier on it.
+  remains: Any graph built after the fact is built from what a node happened to keep. A program can look dependency-free because its integrators’ traces are gone.
+  fix:     Deployment, not code: run Dot continuously and persist its own graph, or buy an archive-node endpoint. A `dot cache --warm` prefetch was proposed and is **not implemented in this build** — do not cite it.
+  tests:   test/scout.test.ts
+
+VALUE_IS_PROXY
+  not a code problem: Value is attributed to the accounts a call touched, counted once on the receiving side, and reported per transaction with its ceiling stated.
+  remains: Nothing in the RPC response binds a transfer to a CPI leg. A router swap touching six accounts cannot be split, so no per-edge settlement figure exists to be computed.
+  fix:     An instrumented node or an indexer that stores instruction-level balance diffs. Not a Dot feature.
+  tests:   test/graph.test.ts
+
+NO_IDL_CONTRACT
+  not a code problem: Without an interface Dot makes no semantic claim, and the report says `narrative.refused = "idl_unavailable"` rather than paraphrasing a bytecode diff.
+  remains: Solana has no mandatory IDL. A publisher who ships only a binary leaves nothing for any tool to read, in Dot or elsewhere.
+  fix:     Operator supplies --idl and --prior-idl. That is the whole fix.
+  tests:   test/llm.test.ts
+
+BLOCK_FETCH_AMPLIFICATION
+  not a code problem: A block contains every transaction in the slot. Dot prices this explicitly: the plan prints callSavingRatio and byteAmplification together, refuses oversized blocks, and only batches when calls genuinely bind.
+  remains: No encoding choice makes a block smaller than the block. Bandwidth-bound backfills need a filtered feed or an indexer, not a better getBlock call.
+  fix:     dot calibrate --rpc <url> replaces the labelled defaults with your endpoint’s real sizes.
+  tests:   test/ingest.test.ts
+
+FEED_BACKPRESSURE
+  not a code problem: A finite budget against an unbounded event stream means some events are not analysed. Dispatcher serves authority handovers first, drains serially, and exposes dropped by reason.
+  remains: Raising maxPerEvent or maxRpcCalls moves the ceiling; it does not remove it. An unbounded daemon is an unbudgeted bill.
+  fix:     More daily RPC, or a narrower --authority filter.
+  tests:   test/ingest.test.ts
+
+FINALITY_VS_LATENCY
+  not a code problem: Reads default to finalized so a persisted graph cannot be reorged out from under itself, and the latency cost is named in the report.
+  remains: Detecting an exploit in progress costs minutes. There is no commitment level that is both safe to persist and immediate.
+  fix:     --commitment confirmed trades reorg safety for latency. Never processed for a persisted graph.
+  tests:   (none — this state does not claim a fix)
+
+NO_MALICE_DETECTION
+  not a code problem: A tier is printed as a queue position with its components exposed, and every report ends with a sentence saying a low tier is a statement about evidence.
+  remains: Deciding whether an upgrade is hostile requires intent: repository, governance discussion, who signed. Dot ranks attention; it never adjudicates.
+  tests:   test/risk.test.ts
+
+PDA_HOLDINGS_NOT_ENUMERATED
+  not a code problem: Routed value is labelled as routed, never as custody, so a small graph cannot be misread as a small stake.
+  remains: No RPC lists all token accounts owned by a program’s PDAs, and the seeds live in source the publisher need not share. A seed list is external configuration; with it Dot could sum holdings, without it the number is unknown rather than zero.
+  fix:     Supply PDA seeds from the deployment repo, or use an indexer/DAS API. See docs/blocked.md for why the --seeds path is not in this build.
+  tests:   (none — this state does not claim a fix)
+RESOLVED claims verified against existing test files: yes

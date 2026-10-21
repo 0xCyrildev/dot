@@ -23,6 +23,7 @@ import { resolveIdl } from '../idl.js';
 import { renderMarkdown, type DotReport } from '../report.js';
 import { BlastRadiusScanner, renderBlastRadius, loadProgramList, loadAuthorityMap } from '../commands/blastRadius.js';
 import { LIMIT_NOTES } from '../limits.js';
+import { LIMIT_STATUS, auditCoverage, countStates, renderLimitStatus, verifyTestClaims, type LimitState } from '../commands/limits.js';
 import { TIER_MEANING } from '../score/risk.js';
 import { isDotError } from '../errors.js';
 import { isWellFormedPubkey } from '../ids.js';
@@ -219,13 +220,14 @@ program
   .option('--format <fmt>', 'json | md | both', 'both')
   .option('--out <dir>', 'write report files into this directory')
   .option('--state <file>', 'persist prior digests here so repeated runs get real Decide inputs')
+  .option('--status-file <file>', 'write the daemon cursor/status so `dot_watch_status` can read it')
   .option('--yellowstone <url>', 'chain-wide feed from a Yellowstone/Geyser endpoint instead of polling the target list')
   .option('--yellowstone-token <token>', 'auth token for the gRPC endpoint (or DOT_YELLOWSTONE_TOKEN); never echoed')
   .option('--authority <pubkey>', 'server-side filter to one upgrade authority (memcmp at the measured offset)')
   .option('--timelock-ms <ms>', 'declare a governance delay; Dot cannot read one off chain and will not invent one')
   .option('--per-event-rpc <n>', 'max RPC calls for any single upgrade investigation', '50')
   .option('--daily-rpc <n>', 'max RPC calls the daemon may spend before it starts dropping events', '5000')
-  .action(async (opts: GlobalOpts & { targets: string; interval: string; transport: string; once?: boolean; fireOnBaseline?: boolean; state?: string; yellowstone?: string; yellowstoneToken?: string; authority?: string; timelockMs?: string; perEventRpc: string; dailyRpc: string }) => {
+  .action(async (opts: GlobalOpts & { targets: string; interval: string; transport: string; once?: boolean; fireOnBaseline?: boolean; state?: string; statusFile?: string; yellowstone?: string; yellowstoneToken?: string; authority?: string; timelockMs?: string; perEventRpc: string; dailyRpc: string }) => {
     const targets: WatchTarget[] = JSON.parse(await readFile(opts.targets, 'utf8'));
     if (!Array.isArray(targets) || targets.length === 0) {
       process.stderr.write('error: targets file must be a non-empty JSON array\n');
@@ -501,8 +503,24 @@ program
     watcher.on('error', (e) => process.stderr.write(`watch: ${(e as Error).message}\n`));
     watcher.on('degraded', (d) => process.stderr.write(`watch DEGRADED: ${JSON.stringify(d)}\n`));
 
+    const writeStatus = () => {
+      if (!opts.statusFile) return;
+      const payload = {
+        network: opts.rpc ?? process.env.DOT_RPC_URL ?? DEFAULT_RPC,
+        writtenAt: Date.now(),
+        watcher: { ...watcher.status(), network: 'mainnet' },
+        ...(feedStatsForStatus ? { feed: feedStatsForStatus } : {}),
+        mode,
+      };
+      void writeFile(opts.statusFile, JSON.stringify(payload, null, 2)).catch((e) =>
+        process.stderr.write(`status file write failed: ${(e as Error).message}\n`),
+      );
+    };
+    let feedStatsForStatus: unknown = null;
+
     if (opts.once) {
       const events = await watcher.tick('poll');
+      writeStatus();
       for (const ev of events) await runFor('upgrade', ev);
       if (events.length === 0) process.stdout.write(`no changes across ${targets.length} target(s)\n`);
       watcher.stop();
@@ -510,6 +528,8 @@ program
     }
 
     await watcher.start();
+    writeStatus();
+    setInterval(writeStatus, Math.max(5_000, Number(opts.interval))).unref?.();
     process.stderr.write(`watching ${targets.length} target(s) via ${opts.transport} every ${opts.interval}ms (mode ${mode === 'real' ? 'real' : 'rules'})\n`);
     const shutdown = () => {
       watcher.stop();
@@ -650,7 +670,25 @@ program
 program
   .command('limits')
   .description('print what Dot cannot see, as data')
-  .action(() => {
+  .option('--status', 'three-state view: RESOLVED / NARROWED / UNRESOLVABLE_IN_CODE, with the test behind each claim')
+  .option('--state <state>', 'with --status: filter to one state', undefined)
+  .option('--format <fmt>', 'with --status: md | json', 'md')
+  .action(async (opts: { status?: boolean; state?: string; format: string }) => {
+    if (opts.status) {
+      const verification = await verifyTestClaims(process.cwd());
+      if (opts.format === 'json') {
+        process.stdout.write(`${JSON.stringify({ counts: countStates(), coverage: auditCoverage(), verification, status: LIMIT_STATUS }, null, 2)}\n`);
+        if (!verification.ok) process.exitCode = 5;
+        return;
+      }
+      process.stdout.write(renderLimitStatus(opts.state ? { state: opts.state as LimitState } : {}));
+      process.stdout.write(`RESOLVED claims verified against existing test files: ${verification.ok ? 'yes' : 'NO'}\n`);
+      for (const p of verification.problems) process.stdout.write(`  problem: ${p}\n`);
+      // A RESOLVED label with a missing test is not a resolved limit; exit nonzero so
+      // a CI run cannot print a green table over a broken claim.
+      if (!verification.ok) process.exitCode = 5;
+      return;
+    }
     for (const l of LIMIT_NOTES) {
       process.stdout.write(`${l.code}  (${l.always ? 'always' : 'when triggered'})\n  ${l.title}\n  blind: ${l.blind}\n  out:   ${l.mitigation}\n\n`);
     }

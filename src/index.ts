@@ -26,4 +26,16 @@ export { YellowstoneUpgradeFeed, classify as classifyLoaderAccount, MEASURED_ELF
 export { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel, type IngestPlan } from './graph/batcher.js';
 export { UpgradeDispatcher, DEFAULT_DISPATCHER_LIMITS, type DispatchStats } from './watcher/dispatcher.js';
 export { ProgramIndex, type Resolved, type ResolveMethod } from './state/programIndex.js';
+export {
+  LIMIT_STATUS,
+  auditCoverage,
+  countStates,
+  renderLimitStatus,
+  statusFor,
+  verifyTestClaims,
+  type LimitState,
+  type LimitStatus,
+} from './commands/limits.js';
+export { BlastRadiusScanner, renderBlastRadius, toWarnings, RANK_FORMULA, type ScanResult, type Warning } from './commands/blastRadius.js';
+export { StagedUpgradeDetector, decodeStagedBuffer, finalizeEta, type StagedUpgradeEvent } from './state/preDeploy.js';
 export { DotError, BudgetExhaustedError, isDotError } from './errors.js';
