@@ -580,6 +580,7 @@ export class Scout {
       failedCpiOccurrences: graph.detailedEdges.reduce((s, e) => s + e.failed, 0),
       distinctTransactions: graph.tracesAnalyzed,
       lamportsRouted: graph.detailedEdges.reduce((s, e) => s + e.lamportsRouted, 0),
+      lamportsMovedDeduped: graph.lamportsMovedDeduped,
       mintsTouched: new Set(graph.detailedEdges.flatMap((e) => e.tokenMintsTouched)).size,
       selfCpi: graph.nodeMeta.some((n) => n.selfCpi && n.id === ctx.program),
     };
@@ -725,6 +726,7 @@ export class Scout {
             cpiOccurrences: built.exposure.cpiOccurrences,
             failedCpiOccurrences: built.exposure.failedCpiOccurrences,
             lamportsRouted: built.exposure.lamportsRouted,
+            lamportsMovedDeduped: built.exposure.lamportsMovedDeduped,
             mintsTouched: built.exposure.mintsTouched,
             tracesAnalyzed: built.graph.tracesAnalyzed,
             tracesFailed: built.graph.tracesFailed,

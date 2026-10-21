@@ -59,6 +59,8 @@ export type DotReport = {
     cpiOccurrences: number;
     failedCpiOccurrences: number;
     lamportsRouted: number;
+    /** The honest total: each receiving account once per transaction. */
+    lamportsMovedDeduped: number;
     mintsTouched: number;
     tracesAnalyzed: number;
     tracesFailed: number;
@@ -150,7 +152,8 @@ export function renderMarkdown(r: DotReport): string {
     L.push(`| edges | ${b.edges} |`);
     L.push(`| CPI occurrences in sample | ${b.cpiOccurrences} (${b.failedCpiOccurrences} failed) |`);
     L.push(`| traces analyzed | ${b.tracesAnalyzed} (${b.tracesFailed} transactions that failed outright) |`);
-    L.push(`| lamports inbound-attributed | ${b.lamportsRouted} (${(b.lamportsRouted / SOL).toFixed(3)} SOL) |`);
+    L.push(`| **lamports moved (deduped)** | ${b.lamportsMovedDeduped} (${(b.lamportsMovedDeduped / SOL).toFixed(3)} SOL) — use this figure |`);
+    L.push(`| lamports attributed per call | ${b.lamportsRouted} (${(b.lamportsRouted / SOL).toFixed(3)} SOL) — NOT a total, repeats across calls sharing an account |`);
     L.push(`| distinct mints touched | ${b.mintsTouched} |`);
     L.push(`| attribution | \`${b.attributionQuality}\`${b.attributionQuality === 'flat' ? ' — dependent counts are an UPPER BOUND' : ''} |`);
     L.push(`| history span of sample | ${b.historySpanDays === null ? 'unknown' : `${b.historySpanDays.toFixed(2)} days`} |`);

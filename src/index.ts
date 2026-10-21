@@ -38,4 +38,6 @@ export {
 } from './commands/limits.js';
 export { BlastRadiusScanner, renderBlastRadius, toWarnings, RANK_FORMULA, type ScanResult, type Warning } from './commands/blastRadius.js';
 export { StagedUpgradeDetector, decodeStagedBuffer, finalizeEta, type StagedUpgradeEvent } from './state/preDeploy.js';
+export { replayTransaction, renderReplay, type ReplayResult } from './commands/replay.js';
+export { sumHoldings, deriveSeedAddress, loadSeedFile, renderHoldings, type SeedSpec, type Holdings } from './state/seeds.js';
 export { DotError, BudgetExhaustedError, isDotError } from './errors.js';

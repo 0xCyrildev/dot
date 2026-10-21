@@ -50,6 +50,13 @@ export type Graph = {
   nodeMeta: ProgramNode[];
   tracesAnalyzed: number;
   tracesFailed: number;
+  /**
+   * Lamports moved in the sample, counted once per account per transaction. Use this
+   * for any headline figure: `detailedEdges[].lamportsRouted` is per call and is
+   * **not additive** — one balance change touched by several frames appears on each of
+   * those edges, so summing edges double- and triple-counts the same movement.
+   */
+  lamportsMovedDeduped: number;
   /** Attribution honesty for the whole graph, worst value across traces. */
   attributionQuality: 'stackHeight' | 'logs' | 'flat';
   flattenedFrames: number;
@@ -104,6 +111,7 @@ export class GraphBuilder {
   private readonly nodes = new Map<string, ProgramNode>();
   private tracesAnalyzed = 0;
   private tracesFailed = 0;
+  private lamportsDeduped = 0;
   private quality: Graph['attributionQuality'] = 'stackHeight';
   private flattenedFrames = 0;
   private anomalies = new Set<string>();
@@ -123,8 +131,14 @@ export class GraphBuilder {
 
     const keyCount = Math.max(tx.transaction.message.accountKeys.length, tx.meta?.preBalances.length ?? 0);
     const tv = traceValue(tx, keyCount);
+    // Populated as frames are walked; settled into `lamportsDeduped` at the end.
+    const gainByIndex = new Map<number, number>();
 
     for (const frame of analysis.frames) {
+      for (const i of frame.accountIndexes) {
+        const delta = tv.keyDelta[i];
+        if (typeof delta === 'number' && delta > 0) gainByIndex.set(i, Math.max(gainByIndex.get(i) ?? 0, delta));
+      }
       const from = frame.parentProgramId ?? this.target;
       const to = frame.programId;
       const id = `${from}\u0000${to}`;
@@ -184,6 +198,10 @@ export class GraphBuilder {
         if (n) n.selfCpi = true;
       }
     }
+
+    // Settled once per transaction. An account's gain enters the transaction total
+    // exactly once, however many attributed calls touched it.
+    for (const gain of gainByIndex.values()) this.lamportsDeduped += gain;
   }
 
   private touchNode(id: string, direction: 'inbound' | 'outbound'): void {
@@ -196,6 +214,13 @@ export class GraphBuilder {
     else node.outbound++;
   }
 
+  /**
+   * Count each receiving account's gain **once per transaction**, regardless of how
+   * many attributed calls touched it. Edge-level `lamportsRouted` legitimately repeats
+   * a movement across the frames that touched the same account; a total built by
+   * summing those edges would triple-count it. Both numbers are kept, and the field
+   * docs say which one a headline should use.
+   */
   finalize(): Graph {
     const detailed: GraphEdge[] = [...this.edges.values()]
       .map((e) => ({
@@ -227,6 +252,7 @@ export class GraphBuilder {
       nodeMeta,
       tracesAnalyzed: this.tracesAnalyzed,
       tracesFailed: this.tracesFailed,
+      lamportsMovedDeduped: this.lamportsDeduped,
       attributionQuality: this.quality,
       flattenedFrames: this.flattenedFrames,
       anomalies: [...this.anomalies],

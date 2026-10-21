@@ -137,3 +137,33 @@ describe('encoding equivalence', () => {
     expect(sys?.accountPubkeys).toEqual(expect.arrayContaining([USER, VAULT]));
   });
 });
+
+describe('value accounting honesty', () => {
+  it('does not let a per-edge sum masquerade as a transaction total', () => {
+    const tx = txFixture('tx-depth3');
+    tx.meta.postBalances = [...tx.meta.preBalances];
+    // One account receives value; several attributed calls touch it.
+    tx.meta.postBalances[5] = (tx.meta.preBalances[5] ?? 0) + 1_000_000;
+    const b = new GraphBuilder(ALPHA);
+    const analysis = analyzeTrace(tx, resolveAccountKeys(tx));
+    // Duplicate the same trace under three signatures to make the overcount visible
+    // at the transaction level too.
+    for (const sig of ['s1', 's2', 's3']) b.addTrace(sig, tx, analysis);
+    const g = b.finalize();
+    const edgeSum = g.detailedEdges.reduce((s2, e) => s2 + e.lamportsRouted, 0);
+    // Edges legitimately repeat a movement across the calls that touched it...
+    expect(edgeSum).toBeGreaterThan(1_000_000);
+    // ...but the deduped total counts each receiving account once per transaction.
+    expect(g.lamportsMovedDeduped).toBe(3_000_000);
+    expect(g.lamportsMovedDeduped).toBeLessThan(edgeSum);
+  });
+
+  it('keeps the deduped total at zero when nothing actually moved', () => {
+    const tx = txFixture('tx-failed');
+    tx.meta.postBalances = [...tx.meta.preBalances];
+    tx.meta.postBalances[5] = (tx.meta.postBalances[5] ?? 0) + 5_000_000;
+    const b = new GraphBuilder(ALPHA);
+    b.addTrace('sigF', tx, analyzeTrace(tx, resolveAccountKeys(tx)));
+    expect(b.finalize().lamportsMovedDeduped).toBe(0);
+  });
+});

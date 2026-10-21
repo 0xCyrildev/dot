@@ -7,7 +7,10 @@ export type ExposureSignals = {
   cpiOccurrences: number;
   failedCpiOccurrences: number;
   distinctTransactions: number;
+  /** Sum of per-edge attributions. NOT a total: repeated across calls that share an account. */
   lamportsRouted: number;
+  /** Each receiving account counted once per transaction. This is the headline number. */
+  lamportsMovedDeduped: number;
   mintsTouched: number;
   selfCpi: boolean;
 };
@@ -107,8 +110,16 @@ export function scoreRisk(
   components.push({ name: 'cpi_volume', points: volumePoints, max: 12, why: `${exposure.cpiOccurrences} attributed CPI occurrences in the sample` });
 
   // 1e12 lamports ~= 1000 SOL as the reference point for "a lot routed through here".
-  const valuePoints = logScore(exposure.lamportsRouted, 1e12, 14);
-  components.push({ name: 'value_routed', points: valuePoints, max: 14, why: `${exposure.lamportsRouted} lamports inbound-attributed across ${exposure.mintsTouched} mint(s)` });
+  // Score on the deduped figure. Scoring on the edge sum would let a program with a
+  // chatty but low-value graph outrank a quiet one moving real size.
+  const valueBasis = exposure.lamportsMovedDeduped || exposure.lamportsRouted;
+  const valuePoints = logScore(valueBasis, 1e12, 14);
+  components.push({
+    name: 'value_routed',
+    points: valuePoints,
+    max: 14,
+    why: `${valueBasis} lamports moved (deduped per account per transaction; edge-sum attribution totals ${exposure.lamportsRouted}, which overcounts) across ${exposure.mintsTouched} mint(s)`,
+  });
 
   if (exposure.selfCpi) {
     components.push({ points: 4, max: 4, name: 'self_cpi', why: 'program CPIs into itself: an upgrade changes re-entrancy behaviour' });

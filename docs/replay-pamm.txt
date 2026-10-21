@@ -1,0 +1,28 @@
+Replayed test/fixtures/tx-nested.json — captured from api.mainnet-beta.solana.com on 2026-10-21 (test/fixtures/tx-nested.json)
+slot 459628002  version legacy  succeeded  keys via static_only
+6 outer instruction(s), 2 inner group(s), 11 CPI instruction(s), attribution stackHeight
+
+Call frames (caller -> callee, and how the caller was established):
+  depth 2  AToken…8knL -> Tokenk…Q5DA [spl-token]  via stackHeight
+  depth 2  AToken…8knL -> 111111…1111 [system]  via stackHeight
+  depth 2  AToken…8knL -> Tokenk…Q5DA [spl-token]  via stackHeight
+  depth 2  AToken…8knL -> Tokenk…Q5DA [spl-token]  via stackHeight
+  depth 2  pAMMBa…fXEA -> pfeeUx…ojVZ  via stackHeight
+  depth 2  pAMMBa…fXEA -> Tokenz…xuEb [token-2022]  via stackHeight
+  depth 2  pAMMBa…fXEA -> Tokenk…Q5DA [spl-token]  via stackHeight
+  depth 2  pAMMBa…fXEA -> Tokenk…Q5DA [spl-token]  via stackHeight
+  depth 2  pAMMBa…fXEA -> Tokenk…Q5DA [spl-token]  via stackHeight
+  depth 2  pAMMBa…fXEA -> Tokenk…Q5DA [spl-token]  via stackHeight
+  depth 2  pAMMBa…fXEA -> pAMMBa…fXEA  via stackHeight
+
+Aggregated edges:
+  AToken…8knL -> Tokenk…Q5DA  count=3 lamports=313067416 txs=1
+  AToken…8knL -> 111111…1111  count=1 lamports=313067416 txs=1
+  pAMMBa…fXEA -> Tokenz…xuEb  count=1 lamports=313067416 txs=1
+  pAMMBa…fXEA -> Tokenk…Q5DA  count=4 lamports=314040 txs=1
+  pAMMBa…fXEA -> pAMMBa…fXEA  count=1 lamports=0 txs=1
+  pAMMBa…fXEA -> pfeeUx…ojVZ  count=1 lamports=0 txs=1
+
+Direct dependents of pAMMBa…fXEA: 0
+
+One transaction, replayed from captured bytes. It is not a sweep and does not stand for one.

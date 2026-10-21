@@ -20,6 +20,7 @@ import { YellowstoneUpgradeFeed } from '../rpc/yellowstone.js';
 import { StagedUpgradeDetector } from '../state/preDeploy.js';
 import { ResilientClient } from '../rpc/resilient.js';
 import { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
+import { renderReplay, replayTransaction } from '../commands/replay.js';
 import { resolveIdl } from '../idl.js';
 import { loadSeedFile, renderHoldings, sumHoldings } from '../state/seeds.js';
 import { formatEscalation, renderMarkdown, type DotReport } from '../report.js';
@@ -554,6 +555,18 @@ program
     };
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
+  });
+
+program
+  .command('replay')
+  .description('run the real parser over a captured getTransaction JSON, offline')
+  .requiredOption('--fixture <file>', 'a saved getTransaction response (jsonParsed)')
+  .requiredOption('--target <program_id>', 'the program to treat as the graph centre')
+  .option('--provenance <note>', 'where the capture came from; printed with every number')
+  .option('--format <fmt>', 'md | json', 'md')
+  .action(async (opts: { fixture: string; target: string; provenance?: string; format: string }) => {
+    const result = await replayTransaction(opts.fixture, opts.target, opts.provenance);
+    process.stdout.write(opts.format === 'json' ? `${JSON.stringify(result, null, 2)}\n` : `${renderReplay(result)}\n`);
   });
 
 program
