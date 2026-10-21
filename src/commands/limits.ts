@@ -186,11 +186,11 @@ export const LIMIT_STATUS: LimitStatus[] = [
     code: 'BLOCK_FETCH_AMPLIFICATION',
     state: 'UNRESOLVABLE_IN_CODE',
     change:
-      'A block contains every transaction in the slot. Dot prices this explicitly: the plan prints callSavingRatio and byteAmplification together, refuses oversized blocks, and only batches when calls genuinely bind.',
+      'A block contains every transaction in the slot. Dot prices this explicitly: the plan prints callSavingRatio and byteAmplification together, refuses oversized blocks, and only batches when calls genuinely bind. The inputs are now measured, not guessed — `docs/calibrated-model-2026-10-21.json` came out of `dot calibrate` against mainnet (506 tx/block, 18,040 bytes per fetched transaction) and `test/calibrate.test.ts` asserts the plan uses it.',
     remains:
-      'No encoding choice makes a block smaller than the block. Bandwidth-bound backfills need a filtered feed or an indexer, not a better getBlock call.',
-    tests: ['test/ingest.test.ts'],
-    fix: 'dot calibrate --rpc <url> replaces the labelled defaults with your endpoint’s real sizes.',
+      'No encoding choice makes a block smaller than the block. Bandwidth-bound backfills need a filtered feed or an indexer, not a better getBlock call. The measurement is one endpoint on one day: block sizes vary by an order of magnitude between slots, so a deployment should re-run calibrate against its own provider.',
+    tests: ['test/ingest.test.ts', 'test/calibrate.test.ts'],
+    fix: 'dot calibrate --rpc <url> replaces the labelled defaults with your endpoint’s real sizes; --cost-model <file> or DOT_COST_MODEL supplies it.',
   },
   {
     code: 'FEED_BACKPRESSURE',

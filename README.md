@@ -241,7 +241,13 @@ bytes go up 100–1000x, and on a busy program the *wall clock* gets worse. So `
 an explicit cost model, prints both ratios in the report, refuses blocks above `maxBlockBytes`, and only
 chooses batching when calls are genuinely the binding constraint or the target's density justifies it.
 `dot calibrate` measures `avgBlockTransactions` and `avgTxnBytes` from your endpoint and writes the model;
-until then every rationale string says `defaults_unverified`.
+until then every rationale string says `defaults_unverified`. One measured model ships in the repo —
+`docs/calibrated-model-2026-10-21.json`, 506 tx/block and 18,040 bytes/transaction from `api.mainnet-beta`,
+six blocks, stamped with its date and endpoint — and it is worth knowing what it corrected: the defaults
+implied 2000x byte amplification where the real sample says 506x, so the assumed numbers were optimistic
+about batching *and* pessimistic about bandwidth at once. Supply a model with `--cost-model <file>` or pin
+one for every run with `DOT_COST_MODEL=<file>`; Dot will not silently adopt a file that merely happens to
+be in the working directory, because the report has to be able to name where its arithmetic came from.
 
 **Corroboration.** `--secondary-rpc` reads the `ProgramData` account from two endpoints and compares —
 but only at the *same slot*. Two nodes 40 slots apart holding different bytes is chain progress, not
@@ -276,6 +282,7 @@ independent providers. See `docs/live-verify-2026-10-21.md` for a real run, whic
 dot analyze <program_id> --sample 60 --depth 3            # one-off blast radius
 dot analyze <program_id> --mode real --idl new.json --prior-idl old.json
 dot analyze <program_id> --ingest blocks --cost-model dot-cost-model.json
+DOT_COST_MODEL=docs/calibrated-model-2026-10-21.json dot analyze <program_id>   # pin a measured model
 dot analyze <program_id> --unbounded                       # the mode Dot argues against
 dot watch --targets targets.example.json --state state.json
 dot watch --yellowstone <grpc-url> --authority <pubkey>   # chain-wide, no target list
@@ -458,7 +465,7 @@ change). `docs/live-limits-for-2026-10-21.md` is a real run against a mainnet pr
 | `FAILED_TRANSACTIONS_ROLLED_BACK` | Failed CPIs are populated in the response but moved nothing; counted separately. |
 | `SIGNATURE_INDEX_IS_KEY_BASED` | The index matches account keys, not roles, so samples contain noise. |
 | `ADDRESS_TABLE_RESOLUTION` | Wrong v0 key composition misattributes edges silently. `keys.method` is reported. |
-| `BLOCK_FETCH_AMPLIFICATION` | Batching cuts calls and multiplies bytes; the model is labelled until you calibrate it. |
+| `BLOCK_FETCH_AMPLIFICATION` | Batching cuts calls and multiplies bytes; the model is labelled until you calibrate it. A measured one ships (`docs/calibrated-model-2026-10-21.json`) — one endpoint, one day, six blocks. |
 | `FEED_BACKPRESSURE` | Under a storm the dispatcher drops events. Dropped has a counter; it is not clean. |
 | `PRE_DEPLOY_PARTIAL` | Narrowed: `STAGED_UPGRADE` now fires when an image is uploaded but not yet live, with hash, size and staging authority. Still unseen: what the image *does*, the program it belongs to until it lands, and any governance delay — `finalizeEta` says `immediate_unless_governed` rather than inventing one. |
 | `FINALITY_VS_LATENCY` | Reads are `finalized`, which costs minutes of detection. |

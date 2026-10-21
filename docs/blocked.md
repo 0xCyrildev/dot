@@ -38,10 +38,21 @@ same numbers reproduced on a second run):
   plain RPC — concurrent reads landed 9 slots apart, and `minContextSlot` is a lower
   bound. That is why the mutable-account checks read `inconclusive` and is stated in
   `CANNOT_PROVE` rather than hidden.
+- `dot calibrate --blocks 6 --out docs/calibrated-model-2026-10-21.json` measured a real
+  cost model off `api.mainnet-beta`: 6/6 blocks readable, **506 transactions per block**,
+  **18,040 bytes per fetched transaction**, `measuredAt` stamped in the file. Two consecutive
+  runs returned 506 and 687 tx/block, which is the honest statement of how much a six-block
+  sample is worth: an order-of-magnitude-ish spread on a busy chain, so the model is labelled
+  with its endpoint and date rather than treated as a constant.
+- Supplied via `--cost-model` or `DOT_COST_MODEL`, the ingestion rationale changes accordingly:
+  the same 6-signature sample computed **506x byte amplification** instead of the **2000x**
+  the shipped defaults implied. The defaults were wrong in opposite directions on both axes —
+  optimistic about batching, pessimistic about bandwidth — which is what `test/calibrate.test.ts`
+  now pins.
 
 Still not done:
-- `dot calibrate` has never measured a real block; the cost model still says
-  `defaults_unverified`.
+- The calibration is **one endpoint on one day**. A deployment should re-run `dot calibrate`
+  against its own provider; `docs/blocked.md` does not claim otherwise.
 - `dot blast-radius` has ranked one real loader window, not a full sweep, and its ranking
   model is still mostly fixture-tested.
 - `dot analyze --seeds` has summed no real vault. The derivation is proven against a

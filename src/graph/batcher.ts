@@ -49,6 +49,19 @@ export const UNVERIFIED_DEFAULTS: CostModel = {
   measuredAt: null,
 };
 
+/**
+ * Where the cost model comes from: the flag, then `DOT_COST_MODEL`, then nothing.
+ *
+ * Deliberately not "whatever file happens to be in the current directory": a number that
+ * changes the ingestion strategy because of where the process was started from is worse than
+ * a labelled default, and a security report must be able to name the source of its own
+ * arithmetic. The env var exists so a deployment can pin one measured model — see
+ * `docs/calibrated-model-2026-10-21.json`, produced by `dot calibrate` against mainnet.
+ */
+export function resolveCostModelPath(flag: string | undefined, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return flag ?? env.DOT_COST_MODEL ?? undefined;
+}
+
 export async function loadCostModel(path?: string): Promise<CostModel> {
   if (!path) return UNVERIFIED_DEFAULTS;
   try {

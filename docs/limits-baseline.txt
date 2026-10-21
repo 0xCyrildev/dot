@@ -26,7 +26,7 @@ PROGRAMDATA_REVERSE_LOOKUP  (when triggered)
 BLOCK_FETCH_AMPLIFICATION  (when triggered)
   Block batching buys calls with bandwidth, not with cost
   blind: One `getBlock` replaces many `getTransaction` calls, so the RPC-call ceiling stops binding — and the payload becomes every transaction in the slot, most of them unrelated to the target. On a busy program the byte count goes up by two or three orders of magnitude while the call count drops by one. A tool that reports only the first number is recommending the more expensive option.
-  out:   Dot plans against an explicit cost model, prints both sides of the trade in the report (`callSavingRatio`, `byteAmplification`), and refuses a block above `maxBlockBytes`. Run `dot calibrate --rpc <url>` to replace the labelled defaults with sizes your endpoint actually serves; until then the rationale string says `defaults_unverified`.
+  out:   Dot plans against an explicit cost model, prints both sides of the trade in the report (`callSavingRatio`, `byteAmplification`), and refuses a block above `maxBlockBytes`. Run `dot calibrate --rpc <url>` to replace the labelled defaults with sizes your endpoint actually serves, then pass it with `--cost-model <file>` or pin it for every run with `DOT_COST_MODEL`. Measured 2026-10-21 against `api.mainnet-beta`: 506 transactions per sampled block and 18,040 bytes per fetched transaction, which puts real amplification at ~506x where the defaults implied 2000x — the defaults were optimistic about batching and pessimistic about bandwidth, in opposite directions. Until a model is supplied the rationale string says `defaults_unverified`.
 
 ENDPOINT_CORROBORATION  (when triggered)
   Corroboration is only meaningful at the same slot

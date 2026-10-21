@@ -1,0 +1,9 @@
+{
+  "avgBlockTransactions": 506,
+  "avgTxnBytes": 18040,
+  "maxBlockBytes": 32000000,
+  "densityFloor": 4,
+  "source": "docs/calibrated-model-2026-10-21.json",
+  "measuredAt": 1792608183011,
+  "note": "avgTxnBytes measured; blocks sampled 6/6 at api.mainnet-beta.solana.com"
+}

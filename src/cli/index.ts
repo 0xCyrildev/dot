@@ -20,7 +20,7 @@ import { YellowstoneUpgradeFeed } from '../rpc/yellowstone.js';
 import { StagedUpgradeDetector } from '../state/preDeploy.js';
 import { ResilientClient } from '../rpc/resilient.js';
 import { ChainVerifier } from '../rpc/verifier.js';
-import { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
+import { BlockBatcher, loadCostModel, resolveCostModelPath, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
 import { BytecodeVault } from '../state/bytecodeVault.js';
 import { diffBytecode, renderBytecodeDiff, discriminatorsFromIdl } from '../state/bytecodeDiff.js';
 import { renderReplay, replayTransaction } from '../commands/replay.js';
@@ -152,7 +152,7 @@ async function build(o: GlobalOpts & BuildExtras) {
     );
   }
   const quorum = new ResilientClient(endpoints);
-  const model = await loadCostModel(o.costModel);
+  const model = await loadCostModel(resolveCostModelPath(o.costModel));
   const batcher = o.ingest === 'signatures' ? undefined : new BlockBatcher(client, model, budget);
   // Built even with one endpoint: the honest answer to "verify this" without a second
   // source is a refusal that says why, not a silently skipped check.
@@ -199,7 +199,7 @@ program
   .option('--commitment <c>', 'processed | confirmed | finalized', 'finalized')
   .option('--secondary-rpc <url>', 'second endpoint; the upgrade hash is read from both and a same-slot contradiction halts the run')
   .option('--ingest <mode>', 'auto | blocks | signatures (block batching trades RPC calls for bandwidth)', 'auto')
-  .option('--cost-model <file>', 'calibration JSON from `dot calibrate`')
+  .option('--cost-model <file>', 'calibration JSON from `dot calibrate` (or set DOT_COST_MODEL to pin one for every run)')
   .option('--depth <n>', 'transitive dependent hops to report', '3')
   .option('--sol-usd <price>', 'operator-supplied SOL price; Dot has no price oracle and will not invent a USD figure')
   .option('--seeds <file>', 'JSON list of {program_id, seed_template, account_type} to sum custody from derived PDAs')
@@ -348,7 +348,7 @@ program
     });
 
     const secondary = opts.secondaryRpc;
-    const costModel = await loadCostModel(opts.costModel);
+    const costModel = await loadCostModel(resolveCostModelPath(opts.costModel));
     // ---- Chain-wide mode. The target list becomes a fallback, not the design.
     if (opts.yellowstone) {
       const index = new ProgramIndex(daemonClient, daemonBudget);

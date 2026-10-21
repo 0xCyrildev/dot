@@ -100,10 +100,10 @@ NO_IDL_CONTRACT
   tests:   test/llm.test.ts
 
 BLOCK_FETCH_AMPLIFICATION
-  not a code problem: A block contains every transaction in the slot. Dot prices this explicitly: the plan prints callSavingRatio and byteAmplification together, refuses oversized blocks, and only batches when calls genuinely bind.
-  remains: No encoding choice makes a block smaller than the block. Bandwidth-bound backfills need a filtered feed or an indexer, not a better getBlock call.
-  fix:     dot calibrate --rpc <url> replaces the labelled defaults with your endpoint’s real sizes.
-  tests:   test/ingest.test.ts
+  not a code problem: A block contains every transaction in the slot. Dot prices this explicitly: the plan prints callSavingRatio and byteAmplification together, refuses oversized blocks, and only batches when calls genuinely bind. The inputs are now measured, not guessed — `docs/calibrated-model-2026-10-21.json` came out of `dot calibrate` against mainnet (506 tx/block, 18,040 bytes per fetched transaction) and `test/calibrate.test.ts` asserts the plan uses it.
+  remains: No encoding choice makes a block smaller than the block. Bandwidth-bound backfills need a filtered feed or an indexer, not a better getBlock call. The measurement is one endpoint on one day: block sizes vary by an order of magnitude between slots, so a deployment should re-run calibrate against its own provider.
+  fix:     dot calibrate --rpc <url> replaces the labelled defaults with your endpoint’s real sizes; --cost-model <file> or DOT_COST_MODEL supplies it.
+  tests:   test/ingest.test.ts, test/calibrate.test.ts
 
 FEED_BACKPRESSURE
   not a code problem: A finite budget against an unbounded event stream means some events are not analysed. Dispatcher serves authority handovers first, drains serially, and exposes dropped by reason.
