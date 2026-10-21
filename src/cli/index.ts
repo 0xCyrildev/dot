@@ -20,6 +20,8 @@ import { YellowstoneUpgradeFeed } from '../rpc/yellowstone.js';
 import { StagedUpgradeDetector } from '../state/preDeploy.js';
 import { ResilientClient } from '../rpc/resilient.js';
 import { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
+import { BytecodeVault } from '../state/bytecodeVault.js';
+import { diffBytecode, renderBytecodeDiff, discriminatorsFromIdl } from '../state/bytecodeDiff.js';
 import { renderReplay, replayTransaction } from '../commands/replay.js';
 import { resolveIdl } from '../idl.js';
 import { loadSeedFile, renderHoldings, sumHoldings } from '../state/seeds.js';
@@ -67,6 +69,7 @@ type GlobalOpts = {
   budgetWall: string;
   sample: string;
   unbounded: boolean;
+  bytecodeVault?: string;
   idl?: string;
   priorIdl?: string;
   tryOnchainIdl: boolean;
@@ -90,7 +93,22 @@ function parseBudget(o: GlobalOpts): Budget {
   });
 }
 
-async function build(o: GlobalOpts) {
+type BuildExtras = Partial<Pick<import('../agent/scout.js').ScoutOptions, 'bytecode' | 'recordBytecode'>>;
+
+async function readIdlPair(now?: string, prior?: string): Promise<{ now: unknown | null; prior: unknown | null }> {
+  const load = async (p?: string) => {
+    if (!p) return null;
+    try {
+      const text = p.startsWith('http') ? await (await fetch(p, { signal: AbortSignal.timeout(15_000) })).text() : await readFile(p, 'utf8');
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  };
+  return { now: await load(now), prior: await load(prior) };
+}
+
+async function build(o: GlobalOpts & BuildExtras) {
   void o.solUsd;
   const rpc = o.rpc ?? process.env.DOT_RPC_URL ?? DEFAULT_RPC;
   if (rpc === DEFAULT_RPC) {
@@ -138,6 +156,8 @@ async function build(o: GlobalOpts) {
     mode,
     knownMultisigs: o.multisig,
     maxDepth: Number(o.depth),
+    ...(o.bytecode ? { bytecode: o.bytecode } : {}),
+    ...(o.recordBytecode ? { recordBytecode: o.recordBytecode } : {}),
     idlResolver: (p) => resolveIdl(p, { idl: o.idl, priorIdl: o.priorIdl, tryOnchain: o.tryOnchainIdl }, client),
     ...(o.secondaryRpc ? { resilient: { quorum: (a: string) => quorum.getAccountInfoQuorum(a) } } : {}),
     ...(batcher ? { batcher, ingest: o.ingest as 'auto' | 'blocks' | 'signatures' } : {}),
@@ -172,10 +192,12 @@ program
   .option('--depth <n>', 'transitive dependent hops to report', '3')
   .option('--sol-usd <price>', 'operator-supplied SOL price; Dot has no price oracle and will not invent a USD figure')
   .option('--seeds <file>', 'JSON list of {program_id, seed_template, account_type} to sum custody from derived PDAs')
+  .option('--bytecode-vault <dir>', 'directory where Dot keeps images it has seen, to diff against on the next upgrade')
+  .option('--prior-bytecode <file>', 'explicit prior image, when the vault has none')
   .option('--label <label>', 'human name for reports')
   .option('--format <fmt>', 'json | md | both', 'both')
   .option('--out <dir>', 'write report files into this directory instead of stdout')
-  .action(async (programId: string, opts: GlobalOpts & { label?: string; forceFullTrace?: boolean; seeds?: string }) => {
+  .action(async (programId: string, opts: GlobalOpts & { label?: string; forceFullTrace?: boolean; seeds?: string; priorBytecode?: string }) => {
     if (!isWellFormedPubkey(programId)) {
       process.stderr.write(`error: ${programId} is not a 32-byte base58 address\n`);
       process.exitCode = 2;
@@ -567,6 +589,26 @@ program
   .action(async (opts: { fixture: string; target: string; provenance?: string; format: string }) => {
     const result = await replayTransaction(opts.fixture, opts.target, opts.provenance);
     process.stdout.write(opts.format === 'json' ? `${JSON.stringify(result, null, 2)}\n` : `${renderReplay(result)}\n`);
+  });
+
+program
+  .command('diff')
+  .description('offline structural bytecode diff between two program images, with optional IDL naming')
+  .requiredOption('--old <file>', 'prior bytecode image (raw)')
+  .requiredOption('--new <file>', 'new bytecode image (raw)')
+  .option('--old-idl <file>', 'prior IDL, gives instruction names to match selectors against')
+  .option('--new-idl <file>', 'new IDL')
+  .option('--program <id>', 'label for the output')
+  .action(async (opts: { old: string; new: string; oldIdl?: string; newIdl?: string; program?: string }) => {
+    const [oldBytes, newBytes] = await Promise.all([readFile(opts.old), readFile(opts.new)]);
+    const oldIdl = opts.oldIdl ? JSON.parse(await readFile(opts.oldIdl, 'utf8')) : null;
+    const newIdl = opts.newIdl ? JSON.parse(await readFile(opts.newIdl, 'utf8')) : null;
+    const d = diffBytecode({ oldBytes, newBytes, oldIdl, newIdl });
+    process.stdout.write(`${renderBytecodeDiff(d, opts.program ?? 'unknown')}\n`);
+    const names = discriminatorsFromIdl(newIdl ?? oldIdl);
+    if (names.byName.size === 0) {
+      process.stdout.write('\nNo instruction names supplied: the diff reports byte movement only, and makes no entrypoint claim.\n');
+    }
   });
 
 program

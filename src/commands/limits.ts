@@ -164,6 +164,16 @@ export const LIMIT_STATUS: LimitStatus[] = [
     tests: ['test/scout.test.ts'],
   },
   {
+    code: 'BYTECODE_SCANABILITY_UNVALIDATED',
+    state: 'NARROWED',
+    change:
+      'The discriminator derivation is asserted against Anchor\'s published rule computed independently in test, the scan is asserted on images with selectors at scattered offsets, and the diff refuses to name anything it cannot resolve from an IDL.',
+    remains:
+      'No genuine compiled Anchor .so has been scanned in this build, so the contiguous-constant assumption is unverified in the field. The gated test runs it on any DOT_TEST_SO/DOT_TEST_IDL pair.',
+    tests: ['test/bytecode.test.ts'],
+    fix: 'Set DOT_TEST_SO and DOT_TEST_IDL and re-run the suite, or paste a real idl.json plus a deployed program image.',
+  },
+  {
     code: 'PROGRAMDATA_REVERSE_LOOKUP',
     state: 'NARROWED',
     change:

@@ -38,6 +38,22 @@ Unblocks with any working RPC URL. `docs/live-run-2026-10-21.json` is kept as th
 example because it is a genuine report, including the `-32015` refusal — an honest
 failure is better evidence than a convenient success.
 
+## 4. Bytecode diff validated against real compiled Anchor bytecode — BLOCKED (no toolchain, no artifact)
+
+`cargo build-sbf` exists on this box but aborts with
+`error: not a directory: ~/.cache/solana/v1.54/platform-tools/rust/lib`, and fetching that
+platform-tools bundle needs network egress that is blocked. No Anchor `.so` or `idl.json`
+exists anywhere in the home tree either. So the entrypoint diff is validated by unit tests
+against Anchor's published derivation rule and constructed images, not against a compiled
+program. The gated test is ready:
+
+```bash
+DOT_TEST_SO=/path/to/program.so DOT_TEST_IDL=/path/to/idl.json npx vitest run test/bytecode.test.ts
+```
+
+On a networked machine, `cargo build-sbf` inside any Anchor project produces both artifacts
+in about two minutes. Until then `BYTECODE_SCANABILITY_UNVALIDATED` stays in the catalogue.
+
 ## 3. Yellowstone gRPC against a live endpoint — BLOCKED (no endpoint, no token)
 
 `GRPC_LIVE_PATH_MOCKED` covers what was proven: raw protobuf frames built with the

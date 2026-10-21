@@ -8,3 +8,4 @@ reports/
 state/
 .DS_Store
 *.tmp.mjs
+.dot-vault/

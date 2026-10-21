@@ -9,6 +9,7 @@ import { analyzeTrace } from '../graph/normalize.js';
 import { resolveAccountKeys } from '../graph/keys.js';
 import type { SolanaClient } from '../rpc/client.js';
 import type { WireSignatureInfo } from '../rpc/wire.js';
+import { diffBytecode, renderBytecodeDiff, type BytecodeDiff } from '../state/bytecodeDiff.js';
 import type { BlockBatcher, IngestSummary } from '../graph/batcher.js';
 import { classifyAuthority, deriveProgramData, decodeProgramData } from '../state/programdata.js';
 import { BudgetExhaustedError, DotError, describeError, isDotError } from '../errors.js';
@@ -90,6 +91,19 @@ export type ScoutOptions = {
   batcher?: BlockBatcher;
   ingest?: 'auto' | 'blocks' | 'signatures';
   batchOpts?: { includeLogs?: boolean; maxBlocks?: number };
+  /**
+   * Supplies the prior image and whichever IDLs exist. Injected rather than built here:
+   * the engine should not know about a vault directory or a file flag, and the honest
+   * answer to "where did the old bytecode come from?" differs per deployment.
+   */
+  bytecode?: (args: {
+    program: string;
+    programData: string;
+    currentDigest: string;
+    currentBytes: Buffer;
+  }) => Promise<{ oldBytes: Buffer | null; oldIdl?: unknown | null; newIdl?: unknown | null; provenance: string } | null>;
+  /** Store the observed image so a future upgrade has a "before". */
+  recordBytecode?: (args: { program: string; programData: string; bytes: Buffer; slot: number | null }) => Promise<void>;
   /** Multi-endpoint corroboration for the read that decides whether an upgrade happened. */
   resilient?: { quorum: (address: string) => Promise<import('../rpc/resilient.js').QuorumRead> };
   knownMultisigs?: string[];
@@ -120,6 +134,8 @@ export class Scout {
    */
   private integrityHalt: { agreement: string; reason: string; endpoints: unknown[] } | null = null;
   private lastQuorum: import('../rpc/resilient.js').QuorumRead | null = null;
+  private bytecodeDiff: BytecodeDiff | null = null;
+  private bytecodeProvenance: string | null = null;
   /** Programs co-invoked with the upgrade authority — the reach of that one key. */
   private coControlled: string[] = [];
   private widenNote: string | null = null;
@@ -309,6 +325,45 @@ export class Scout {
     }
 
     if (state) {
+      // Diff the bytecode first: it is derived from a read we already paid for, and it
+      // is the only part of this run that can say what the upgrade *does*.
+      try {
+        if (!acct) throw new Error('no account bytes to diff');
+        if (this.o.recordBytecode) {
+          await this.o.recordBytecode({ program: req.program, programData, bytes: acct.data, slot: state.headerU64 });
+        }
+        const supplied = this.o.bytecode
+          ? await this.o.bytecode({ program: req.program, programData, currentDigest: state.bytecodeHash, currentBytes: acct.data })
+          : null;
+        if (supplied) {
+          this.bytecodeDiff = diffBytecode({
+            oldBytes: supplied.oldBytes,
+            newBytes: acct.data,
+            ...(supplied.oldIdl !== undefined ? { oldIdl: supplied.oldIdl } : {}),
+            ...(supplied.newIdl !== undefined ? { newIdl: supplied.newIdl } : {}),
+          });
+          this.bytecodeProvenance = supplied.provenance;
+          const entryChanges = (this.bytecodeDiff.instructions?.added.length ?? 0) + (this.bytecodeDiff.instructions?.removed.length ?? 0);
+          this.ledger.add({
+            kind: entryChanges > 0 ? 'edge' : 'limit',
+            summary:
+              `bytecode diff (${this.bytecodeDiff.confidence}): +${this.bytecodeDiff.instructions?.added.length ?? 0} / -${this.bytecodeDiff.instructions?.removed.length ?? 0} entrypoint(s), ` +
+              `${this.bytecodeDiff.instructions?.undeclaredEntrypoints.length ?? 0} undeclared, prior image ${supplied.oldBytes ? 'available' : 'UNAVAILABLE'} — ${supplied.provenance}`,
+            ref: { program: req.program },
+          });
+          for (const a of this.bytecodeDiff.instructions?.added ?? []) {
+            this.ledger.add({ kind: 'edge', summary: `entrypoint ADDED "${a.name}" selector=${a.hex} at offsets ${a.offsetsInNew.slice(0, 3).join(',')} — callers never had this path; a dependent that can be made to pass it hits new code`, ref: { program: req.program } });
+          }
+          for (const r of this.bytecodeDiff.instructions?.removed ?? []) {
+            this.ledger.add({ kind: 'edge', summary: `entrypoint REMOVED "${r.name}" selector=${r.hex} — any integrator still encoding it now fails`, ref: { program: req.program } });
+          }
+          for (const u of this.bytecodeDiff.instructions?.undeclaredEntrypoints ?? []) {
+            this.ledger.add({ kind: 'edge', summary: `UNDECLARED ENTRYPOINT reachable in new image, absent from the new IDL: ${u.name} ${u.hex}`, ref: { program: req.program } });
+          }
+        }
+      } catch (e) {
+        this.ledger.add({ kind: 'limit', summary: `bytecode diff not performed: ${(e as Error).message}`, ref: { program: req.program } });
+      }
       const posture = classifyAuthority(state.authority, knownMultisigs);
       this.ledger.add({
         kind: 'posture',

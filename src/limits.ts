@@ -18,7 +18,8 @@ export type LimitCode =
   | 'ENDPOINT_CORROBORATION'
   | 'PROGRAMDATA_REVERSE_LOOKUP'
   | 'FEED_BACKPRESSURE'
-  | 'GRPC_LIVE_PATH_MOCKED';
+  | 'GRPC_LIVE_PATH_MOCKED'
+  | 'BYTECODE_SCANABILITY_UNVALIDATED';
 
 export type LimitNote = {
   code: LimitCode;
@@ -57,6 +58,15 @@ export const LIMIT_NOTES: LimitNote[] = [
       'What is proven: `test/yellowstone-live.test.ts` builds a `SubscribeUpdate` frame with the package’s own generated `encode`, feeds the resulting **raw protobuf bytes** into the feed, and asserts a captured mainnet `ProgramData` account survives the trip byte-for-byte — pubkey, data length, lamports, `writeVersion`, slot — and that `decodeProgramData` recovers the real upgrade authority from those bytes. Unclassifiable, truncated and `isStartup` frames are also covered. What is NOT proven: HTTP/2 handshake, x-token auth, `isReplay` semantics, ping/pong keepalive, and reconnect. Those live below the seam any test in this repo can reach without an endpoint. `test/transports.test.ts` additionally exercises the object-level fake; neither substitutes for the other.',
     mitigation:
       'Set `YELLOWSTONE_ENDPOINT` (and `YELLOWSTONE_TOKEN`) to un-skip the live test in `yellowstone-live.test.ts`, then run `dot watch --yellowstone <url>` and read `feed.statsView()`: `updates` must rise, `startupSkipped` should be non-zero on a replay, `layoutMismatch` should stay near zero. A flat `updates` counter with no error is the signature of a filter that matches nothing — which is exactly the failure mode of passing bytes where this API wants base58 strings — not evidence of a quiet chain.',
+    always: false,
+  },
+  {
+    code: 'BYTECODE_SCANABILITY_UNVALIDATED',
+    title: 'The selector scan is proven on constructed images, not on compiled Anchor bytecode',
+    blind:
+      'The entrypoint diff rests on one assumption: that Anchor emits `sha256("global:<name>")[0..8]` as a contiguous 8-byte constant the scan can locate. That is what the framework does, and the derivation and scan logic are unit-tested, but no genuine `.so` was scanned in this build — `cargo build-sbf` cannot bootstrap its platform-tools without network egress, and no Anchor artifact exists on the box. If a compiler ever splits or merges those constants, the scan under-reports and looks like a clean diff.',
+    mitigation:
+      'Point the gated test at any real artifact: `DOT_TEST_SO=program.so DOT_TEST_IDL=idl.json npx vitest run test/bytecode.test.ts`. It asserts that over half of the IDL-named selectors are located; below that, the assumption is wrong and this module should be rethought rather than trusted.',
     always: false,
   },
   {

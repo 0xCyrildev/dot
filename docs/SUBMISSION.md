@@ -163,6 +163,18 @@ locally rather than trusting a discriminator or the node's parsing. Its output i
 a leaderboard: who to notify, by each dependent program's own upgrade authority, or an explicit count of
 authorities it could not read.
 
+And the part a graph cannot give you: **what the upgrade does**. Because Dot keeps every image
+it has seen in a local content-addressed vault, an upgrade can be diffed at the entrypoint level —
+Anchor instruction selectors are `sha256("global:<name>")[0..8]`, so locating the named selectors in
+the old and new images yields added, removed and persisting entrypoints with no decompiler involved.
+Two output rules make that a security artifact rather than a changelog: a selector reachable in the
+new image but **absent from the new IDL** is reported as an undeclared entrypoint instead of being
+discarded as an unmatched candidate, and an instruction the new IDL declares that is not located in
+the image is reported as unconfirmed instead of being quietly called removed. Where there is no IDL,
+or no prior image in the vault, the diff says `bytecode_only`/`partial` and refuses to name an
+instruction at all — because RPC has no historical account state, the "before" side only exists if
+Dot was watching.
+
 The ranking model is stated rather than hidden: value is scored **linearly** (capped at the reference) and
 dependents **log-scaled**, so `$400M through 2 dependents` outranks `$40M through 14`. Log-scaling
 both axes — the obvious choice — inverts that, because it compresses a 10x value difference into noise and
@@ -170,8 +182,8 @@ lets breadth win. `composite = valueScore × (1 + dependentsScore)` ships alongs
 
 ## 5. What Dot does not see — in three states, not two
 
-`dot limits --status` prints 20 codes: **5 RESOLVED** (each names test files, and `verifyTestClaims()`
-exits 5 if a named test is missing or contains no `it()`), **8 NARROWED**, **7 UNRESOLVABLE_IN_CODE**.
+`dot limits --status` prints 21 codes: **5 RESOLVED** (each names test files, and `verifyTestClaims()`
+exits 5 if a named test is missing or contains no `it()`), **9 NARROWED**, **7 UNRESOLVABLE_IN_CODE**.
 The third category exists because a two-state table forces a bad choice between claiming a fix and filing
 a property of the chain under "not done".
 

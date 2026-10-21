@@ -82,6 +82,10 @@ export type DotReport = {
   };
   limits: LimitNote[];
   narrative?: Narrative;
+  /** Structural bytecode diff (Anchor entrypoints) when a prior image was obtainable. */
+  bytecodeDiff?: import('./state/bytecodeDiff.js').BytecodeDiff;
+  bytecodeProvenance?: string | null;
+  bytecodeDiffMarkdown?: string;
   /** Custody from operator-declared seeds, when --seeds was supplied. Absent means unobserved, not zero. */
   holdings?: { observedLamports: number; observedTokenRaw: Record<string, string>; accountsRead: number; accountsEmpty: number; unresolvedSeeds: unknown[]; stoppedReason: string | null; complete: boolean; source: string };
   budget: BudgetSnapshot;
