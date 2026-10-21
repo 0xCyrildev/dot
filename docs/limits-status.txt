@@ -1,4 +1,4 @@
-Limit status — 5 RESOLVED, 8 NARROWED, 7 UNRESOLVABLE_IN_CODE (20 codes)
+Limit status — 5 RESOLVED, 9 NARROWED, 7 UNRESOLVABLE_IN_CODE (21 codes)
 
 ## RESOLVED
 NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION
@@ -62,6 +62,12 @@ SIGNATURE_INDEX_IS_KEY_BASED
   narrowed: The index returns transactions where the id appears in any role; Dot only credits a program with a call it actually executed, and reports sampleCoverage so noise in the window is visible.
   remains: A sample can still be dominated by transactions where the id is a mint or a token account, which lowers coverage rather than producing a wrong edge.
   tests:   test/scout.test.ts
+
+BYTECODE_SCANABILITY_UNVALIDATED
+  narrowed: The discriminator derivation is asserted against Anchor's published rule computed independently in test, the scan is asserted on images with selectors at scattered offsets, and the diff refuses to name anything it cannot resolve from an IDL.
+  remains: No genuine compiled Anchor .so has been scanned in this build, so the contiguous-constant assumption is unverified in the field. The gated test runs it on any DOT_TEST_SO/DOT_TEST_IDL pair.
+  fix:     Set DOT_TEST_SO and DOT_TEST_IDL and re-run the suite, or paste a real idl.json plus a deployed program image.
+  tests:   test/bytecode.test.ts
 
 PROGRAMDATA_REVERSE_LOOKUP
   narrowed: ProgramIndex resolves a ProgramData address to its program three ways and stamps which one worked: observed pointer accounts (free), the writing transaction plus local PDA re-derivation (one call, exact), or a reverse getProgramAccounts scan.

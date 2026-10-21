@@ -258,8 +258,51 @@ target not matched / target reached and clean. An agent that has only ever seen 
 report an empty range as a clean one, and that single confusion is the failure mode this whole design
 exists to prevent.
 
+## 7. An ask that can be wrong, a second node that can disagree, and a table about one program
+
+Three things a script cannot do, added after the first submission draft, because each one
+converts a missing number into a claim someone can check.
+
+**The escalation is a hypothesis, not a complaint.** When the affordable sample cannot settle the
+question, `needs_more_budget` carries `claimKind`, the claim, the evidence for and against it, a test
+plan with a price on every step, and the one observation that would knock it down. It is *derived* from
+what this run saw — an undeclared selector beats an added entrypoint beats a removed one beats an
+`eoa` authority beats a routine multisig release — and when nothing supports a claim, the kind is
+`unknown_coverage` and the claim is about Dot's own visibility. `--hypothesis-out` writes it; a funded
+run with `--hypothesis-file` answers it instead of re-deriving it, and the re-test refuses to settle a
+claim it cannot afford or whose observation never ran: a full 8-of-8 sample whose widen path declined
+on coverage grounds comes back `not_testable` with the shortfall, never `denied`. A model may write the
+same shape, through the same all-or-nothing citation gate.
+
+**`--verify` asks the second node about the report, not just the upgrade.** `chain_verified`
+cross-checks the `ProgramData` bytes, the `Program` pointer, the sampled transactions (instructions,
+accounts, slot, balance deltas — `logMessages` excluded, since providers truncate differently) and each
+node's own claim about finality. Verdicts are `agree | contradict | inconclusive | unconfirmed`, and
+that distinction came from running it: two public endpoints asked *concurrently* answered the same
+account read 9 slots apart, and `minContextSlot` is a lower bound, so a mutable account cannot be
+compared at one moment over plain RPC — while finalized transactions can. One provider had a sampled
+signature the other reported pruned, which is a retention difference, not a disagreement.
+`CANNOT_PROVE` travels with the flag: no inclusion proof exists in core RPC, and a hostname is not
+proof that two endpoints are independent. The real run, reproduced at the same numbers on a second
+call, is `live-verify-2026-10-21.md`.
+
+**`dot limits --for <program>` answers "which of these, here?"** The catalogue says what Dot can never
+see; four calls decide which limits are live for one address, in four statuses — `applies` (observed),
+`probe_clean` (nothing wrong found *at the point one probe touched*, and the evidence column names that
+point), `not_probed` (this run could not look), `by_construction` (no probe of one program would change
+it). It answers `CPI_DEPTH_ATTRIBUTION` by looking for `stackHeight` in a fetched transaction rather
+than quoting the spec, and confirms the (program, programData) pair from the program side.
+`live-limits-for-2026-10-21.md` is that output, from mainnet.
+
+**Re-measured, not inherited.** RPC egress came back on this box during this session, so
+`docs/blocked.md` §2 now records what has been run against mainnet and what has not: `calibrate` has
+still never measured a real block, `--seeds` has summed no live vault, the Geyser path has still never
+met a live endpoint, and the package is still unpublished (`E401`). The artifacts above are the
+measured ones; everything else stays labelled as the claim it is.
+
 ---
 
 **In one line.** Dot ranks what breaks when a Solana program changes, shows the arithmetic behind the
-ranking, cites the evidence behind every claim or discards the claim, and prints what it could not see in
-every report — including the reports where what it could not see was everything.
+ranking, cites the evidence behind every claim or discards the claim, asks for budget in the form of a
+falsifiable hypothesis a better-funded run has to answer, and prints what it could not see in every
+report — including the reports where what it could not see was everything.

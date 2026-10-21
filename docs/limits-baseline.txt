@@ -8,10 +8,15 @@ NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION  (always)
   blind: There is no `getProgramChanges` and `subscribe*` is per-account. Watching the whole upgradeable loader means polling `getProgramAccounts` on a program that owns >100k accounts, which providers gate, rate-limit or reject outright.
   out:   Dot ships both layers: `watch --targets` polls a named list over JSON-RPC, and `watch --yellowstone <url>` subscribes by owner over Geyser and sees every `ProgramData` write on the cluster. The gRPC feed costs zero JSON-RPC calls, which is what makes chain-wide detection budget-feasible at all.
 
-GRPC_LIVE_PATH_UNVERIFIED  (when triggered)
-  The Geyser path is typechecked and unit-tested, but was not run against a live endpoint
-  blind: The subscription request, the account-update decoding and the classification logic in `src/rpc/yellowstone.ts` were written against the generated types of `@triton-one/yellowstone-grpc` 9.0.1 and exercised with an injected fake stream. No Geyser endpoint was reachable in the session that built it, so handshake, auth-token handling and replay semantics are unverified in the field. Two of its field shapes already contradict the usual write-ups (owner/account are base58 strings, not bytes; lamports/writeVersion are decimal strings), which is what to expect of a layer nobody has poked at.
-  out:   Run `dot watch --yellowstone <url>` against a real endpoint and check `feed.statsView()`: `updates` should rise, `startupSkipped` should be non-zero on a replay, `layoutMismatch` should stay near zero. Treat a flat `updates` counter with no error as the signature of a filter that matches nothing, not as an idle chain.
+GRPC_LIVE_PATH_MOCKED  (when triggered)
+  The Geyser wire format is proven against real bytes; the socket beneath it is not
+  blind: What is proven: `test/yellowstone-live.test.ts` builds a `SubscribeUpdate` frame with the package’s own generated `encode`, feeds the resulting **raw protobuf bytes** into the feed, and asserts a captured mainnet `ProgramData` account survives the trip byte-for-byte — pubkey, data length, lamports, `writeVersion`, slot — and that `decodeProgramData` recovers the real upgrade authority from those bytes. Unclassifiable, truncated and `isStartup` frames are also covered. What is NOT proven: HTTP/2 handshake, x-token auth, `isReplay` semantics, ping/pong keepalive, and reconnect. Those live below the seam any test in this repo can reach without an endpoint. `test/transports.test.ts` additionally exercises the object-level fake; neither substitutes for the other.
+  out:   Set `YELLOWSTONE_ENDPOINT` (and `YELLOWSTONE_TOKEN`) to un-skip the live test in `yellowstone-live.test.ts`, then run `dot watch --yellowstone <url>` and read `feed.statsView()`: `updates` must rise, `startupSkipped` should be non-zero on a replay, `layoutMismatch` should stay near zero. A flat `updates` counter with no error is the signature of a filter that matches nothing — which is exactly the failure mode of passing bytes where this API wants base58 strings — not evidence of a quiet chain.
+
+BYTECODE_SCANABILITY_UNVALIDATED  (when triggered)
+  The selector scan is proven on constructed images, not on compiled Anchor bytecode
+  blind: The entrypoint diff rests on one assumption: that Anchor emits `sha256("global:<name>")[0..8]` as a contiguous 8-byte constant the scan can locate. That is what the framework does, and the derivation and scan logic are unit-tested, but no genuine `.so` was scanned in this build — `cargo build-sbf` cannot bootstrap its platform-tools without network egress, and no Anchor artifact exists on the box. If a compiler ever splits or merges those constants, the scan under-reports and looks like a clean diff.
+  out:   Point the gated test at any real artifact: `DOT_TEST_SO=program.so DOT_TEST_IDL=idl.json npx vitest run test/bytecode.test.ts`. It asserts that over half of the IDL-named selectors are located; below that, the assumption is wrong and this module should be rethought rather than trusted.
 
 PROGRAMDATA_REVERSE_LOOKUP  (when triggered)
   A ProgramData write does not say which program it is
@@ -59,9 +64,9 @@ VALUE_IS_PROXY  (always)
   out:   Treat it as a ranking signal. For a settlement-grade number you need an account-level state diff per instruction, which means an instrumented node or an indexer that stores instruction-level balance changes.
 
 PDA_HOLDINGS_NOT_ENUMERATED  (always)
-  Program-held vaults are not enumerated
-  blind: TVL sitting in a program’s PDAs is not visible from the transaction sample. There is no RPC that lists "all token accounts owned by these PDAs"; `getTokenAccountsByOwner` takes one owner at a time and `getProgramAccounts` on the token program with an owner filter is a full-program scan providers will not serve.
-  out:   Compute vault balances from a known-PDA list (the IDL or the deployment repo gives you the seeds) via `getMultipleAccounts`, or use an indexer/DAS API. Dot leaves `blastRadius.lamportsRouted` explicitly labelled as routed-through value, not custody.
+  Program-held vaults are only enumerable with a declared seed list
+  blind: TVL sitting in a program’s PDAs is not visible from the transaction sample, and the seeds that derive those PDAs live in the deployment repo. Dot can only read custody for seed patterns an operator has declared; for everyone else the figure stays unknown, and unknown is printed as unknown. Typed seeds matter too: the encoding `u8:0` is the byte 0x00, and hashing the ASCII character for zero instead derives a different address that resolves to nothing.
+  out:   `--seeds seeds.example.json` derives each PDA, reads them in `getMultipleAccounts` chunks of up to 100, and sums lamports plus raw token units per mint. It reports unresolved seed variables, absent accounts and an incomplete sweep separately — see `renderHoldings`, which refuses to print a USD figure and states that absence is not zero holdings.
 
 FAILED_TRANSACTIONS_ROLLED_BACK  (when triggered)
   A failed transaction moved nothing
@@ -78,10 +83,10 @@ ADDRESS_TABLE_RESOLUTION  (when triggered)
   blind: Instruction account indexes point into static keys followed by loaded writable then loaded readonly addresses. If a node omits `meta.loadedAddresses`, every index past the static table is wrong, and the graph is wrong in a way that looks like data rather than like an error.
   out:   Dot resolves both paths and reports `keys.method` plus any `unresolvedIndexes` as anomalies in the evidence ledger. Zero unresolved indexes is a precondition for trusting an edge.
 
-NO_PRE_DEPLOY_ANALYSIS  (always)
-  Dot sees landings, not intentions
-  blind: A bytecode change that has not been written on chain does not exist for Dot: no propose-stage review, no repository, no CI signal. It is a runtime tool, deliberately not a static analyzer of what is about to be deployed.
-  out:   Partly narrowed: the Geyser owner filter also catches the loader’s `Buffer` accounts, so `dot watch --yellowstone` prints a `STAGED` line when a program is being uploaded before it lands — an early trigger, not an analysis. Pair it with a static analyzer on the staged bytes.
+PRE_DEPLOY_PARTIAL  (always)
+  Dot sees that an image is staged; it does not see what the image does
+  blind: Narrowed, not closed. The loader’s staging `Buffer` account is visible to the Geyser owner filter, so `dot watch --yellowstone` now emits `STAGED_UPGRADE` with the image hash, size and staging authority, and `STAGED-NOOP` when the bytes already match what is live. What remains unseen: without a published IDL pair there is no semantic reading of the staged image, no source, no repository, and no CI signal. A `Buffer` account also **names no program** — `upgrade` receives the program as a transaction argument — so attribution is deferred until the bytes land, and Dot marks it `UNATTRIBUTED` rather than guessing. There is likewise no protocol-level timelock to read: the loader applies new bytecode on the upgrade transaction itself, so `finalizeEta` reports `immediate_unless_governed` unless the operator declares a delay via `--timelock-ms`. An invented ETA would be the most dangerous number in this tool, because it is the one an operator would schedule against.
+  out:   Supply `--idl`/`--prior-idl` so `mode: real` can read the delta; pair the staged signal with a static analyzer on the staged bytes. Run Dot long enough for bytecode-hash landing to attribute earlier stages, and record `pending()` to see how many images are still unattributed.
 
 FINALITY_VS_LATENCY  (always)
   Finalized-only means slow-only
