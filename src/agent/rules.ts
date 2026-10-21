@@ -9,6 +9,8 @@ export type RuleThresholds = {
   sampleMedium: number;
   sampleLarge: number;
   rpcPerSignature: number;
+  /** Below this a sample cannot distinguish "no dependents" from "not in the sample". */
+  confirmableSignatures: number;
 };
 
 const DEFAULTS: RuleThresholds = {
@@ -18,6 +20,7 @@ const DEFAULTS: RuleThresholds = {
   sampleMedium: 100,
   sampleLarge: 250,
   rpcPerSignature: 1,
+  confirmableSignatures: 12,
 };
 
 /**
@@ -84,27 +87,70 @@ export class RuleBasedDecision implements DecisionEngine {
         confidence: 'medium',
         signals,
         source: 'rules',
-        plan: { signatures: 0, rpcCalls: 0, useLlm: false },
+        plan: { signatures: 0, rpcCalls: 0, useLlm: false, wantedSignatures: 0 },
         llmTokensUsed: 0,
       };
     }
 
     const dependents = ctx.history.knownDependents ?? 0;
-    const signatures =
+    const want =
       dependents > 100 ? this.t.sampleLarge : dependents >= this.t.manyDependents ? this.t.sampleMedium : this.t.sampleSmall;
+
+    // The plan is derived from what is actually left, not from a tier constant that
+    // a later clamp overrides. One call is reserved for the signature walk itself and
+    // the perceive read is already spent.
+    const remaining = ctx.budget?.remainingRpcCalls ?? want;
+    const remainingSignatures = ctx.budget?.remainingSignatures ?? want;
+    const affordableSignatures = Math.max(0, Math.min(want, remainingSignatures, remaining - 1));
+    const riskWarranted =
+      ctx.authority.posture === 'eoa' || ctx.authority.posture === 'unknown' || ctx.change.authorityChanged || ctx.kind === 'program_data_closed';
+
+    if (riskWarranted && affordableSignatures < this.t.confirmableSignatures) {
+      return {
+        proceed: affordableSignatures > 0,
+        escalation: {
+          kind: 'needs_more_budget',
+          requestedRpcCalls: Math.max(want - affordableSignatures, 1),
+          reason: `${ctx.authority.posture} authority${ctx.change.authorityChanged ? ' with the authority rotated' : ''} and ${
+            ctx.history.knownDependents === null ? 'no prior graph' : `${ctx.history.knownDependents} attributed caller(s)`
+          }: a sample of ${affordableSignatures} signature(s) cannot distinguish "no dependents" from "dependents outside the sample"`,
+          whatItWouldConfirm: `a ${want}-signature sample of transactions touching ${ctx.program}`,
+        },
+        rationale: `Wants ${want} signature(s); only ${affordableSignatures} affordable. ${blockers.join('; ') || 'risk-warranted deep look'}`,
+        confidence: 'low',
+        signals: { ...signals, wanted_signatures: want, affordable_signatures: affordableSignatures, remaining_rpc: remaining },
+        source: 'rules',
+        plan: {
+          signatures: affordableSignatures,
+          rpcCalls: affordableSignatures * this.t.rpcPerSignature + 1,
+          useLlm: false,
+          wantedSignatures: want,
+        },
+        llmTokensUsed: 0,
+      };
+    }
 
     return {
       proceed: true,
       rationale: blockers.join('; ') || 'defaulting to a trace pull because nothing proved the blast radius is already known',
       confidence: ctx.authority.posture === 'eoa' || ctx.change.authorityChanged ? 'high' : 'medium',
-      signals,
+      signals: { ...signals, wanted_signatures: want, affordable_signatures: affordableSignatures, remaining_rpc: remaining },
       source: 'rules',
       plan: {
-        signatures,
-        rpcCalls: signatures * this.t.rpcPerSignature,
+        signatures: affordableSignatures,
+        rpcCalls: affordableSignatures * this.t.rpcPerSignature + 1,
         useLlm: ctx.idl.available,
+        wantedSignatures: want,
       },
       llmTokensUsed: 0,
+      ...(riskWarranted && affordableSignatures < want
+        ? {
+            escalation: {
+              kind: 'widen_to_authority' as const,
+              reason: 'sample is smaller than the risk warrants; if the first pass finds no dependents, widen to the authority history',
+            },
+          }
+        : {}),
     };
   }
 }

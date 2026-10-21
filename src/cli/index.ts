@@ -20,7 +20,7 @@ import { StagedUpgradeDetector } from '../state/preDeploy.js';
 import { ResilientClient } from '../rpc/resilient.js';
 import { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
 import { resolveIdl } from '../idl.js';
-import { renderMarkdown, type DotReport } from '../report.js';
+import { formatEscalation, renderMarkdown, type DotReport } from '../report.js';
 import { BlastRadiusScanner, renderBlastRadius, loadProgramList, loadAuthorityMap } from '../commands/blastRadius.js';
 import { LIMIT_NOTES } from '../limits.js';
 import { LIMIT_STATUS, auditCoverage, countStates, renderLimitStatus, verifyTestClaims, type LimitState } from '../commands/limits.js';
@@ -195,6 +195,14 @@ program
       throw e;
     }
     await emit(report, opts);
+    const escalation = formatEscalation(report);
+    if (escalation) {
+      // Exit 4 is "the agent asked for resources", distinct from 3 ("a stop was
+      // reached") and 1 ("it broke"). A wrapper script can branch on it and a human
+      // reading the terminal gets the number to raise.
+      process.stderr.write(`${escalation}\n`);
+      process.exitCode = 4;
+    }
   });
 
 program

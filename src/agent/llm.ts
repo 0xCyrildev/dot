@@ -191,7 +191,12 @@ export class RealLlmDecision implements DecisionEngine {
         confidence: parsed.confidence,
         signals: { ...rules.signals, llm_cites: ok.join(','), engine: 'llm' },
         source: 'llm',
-        plan: { signatures, rpcCalls: signatures, useLlm: parsed.proceed && ctx.idl.available },
+        plan: {
+          signatures,
+          rpcCalls: signatures,
+          useLlm: parsed.proceed && ctx.idl.available,
+          wantedSignatures: Math.max(rules.plan.wantedSignatures, signatures),
+        },
         llmTokensUsed: c.promptTokens + c.completionTokens,
       };
     } catch (e) {

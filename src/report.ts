@@ -44,6 +44,9 @@ export type DotReport = {
   stoppedAt: 'perceive' | 'decide' | 'act' | 'evaluate' | 'report';
   stopNote: string;
   decision: Record<string, unknown> | null;
+  /** Programs co-invoked with the upgrade authority, when the widen path ran. Not dependents. */
+  coControlledPrograms?: string[];
+  widenNote?: string | null;
   blastRadius: {
     directCallers: number;
     transitiveCallers: number;
@@ -76,6 +79,25 @@ export type DotReport = {
   rpc: ClientStats;
   wallMs: number;
 };
+
+/**
+ * The escalation line. Printed *after* the report is emitted, because the partial
+ * answer is still the answer Dot has; the ask is what it would need to make the
+ * answer stronger. Wording matters here: it must read as "I could not confirm", not
+ * as "nothing found".
+ */
+export function formatEscalation(r: DotReport): string | null {
+  const esc = (r.decision as { escalation?: { kind: string; requestedRpcCalls?: number; reason?: string; whatItWouldConfirm?: string } } | null)?.escalation;
+  if (esc?.kind !== 'needs_more_budget') return null;
+  const n = esc.requestedRpcCalls ?? 0;
+  return [
+    `Dot needs ${n} more RPC call(s) to confirm the blast radius for program ${r.program}.`,
+    `Reason: ${esc.reason ?? 'unspecified'}`,
+    `It would use them on: ${esc.whatItWouldConfirm ?? 'a larger trace sample'}.`,
+    `Re-run with --budget-rpc +${n} (current ceiling ${r.budget.limits.maxRpcCalls}, spent ${r.budget.spent.rpcCalls}).`,
+    `Until then this tier is capped by coverage: ${r.cappedBy ?? 'not stated'}.`,
+  ].join('\n');
+}
 
 const SOL = 1_000_000_000;
 
@@ -153,6 +175,8 @@ export function renderMarkdown(r: DotReport): string {
     L.push(`source \`${String(d.source)}\`, proceed \`${String(d.proceed)}\`, plan \`${JSON.stringify(d.plan)}\``);
     L.push(`> ${String(d.rationale)}`);
     if (d.rejected) L.push(`LLM answer discarded: ${JSON.stringify(d.rejected)}`);
+    if (d.escalation) L.push(`**Escalation:** ${JSON.stringify(d.escalation)}`);
+    if (r.widenNote) L.push(`Widen path: ${r.widenNote} — co-controlled programs: ${(r.coControlledPrograms ?? []).length}`);
   } else {
     L.push('No decision record.');
   }

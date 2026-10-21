@@ -30,6 +30,17 @@ export type UpgradeContext = {
   /** Operator overrides that let a human force a deep look regardless of score. */
   forceFullTrace?: boolean;
   notes?: string;
+  /**
+   * The agent's own remaining resources, supplied by the Scout before Decide runs.
+   * Without this the "plan" is a constant that a later clamp quietly overrides, and
+   * nothing in the report shows the plan ever responded to the budget.
+   */
+  budget?: {
+    remainingRpcCalls: number;
+    remainingSignatures: number;
+    elapsedMs: number;
+    maxWallMs: number;
+  };
 };
 
 export type Decision = {
@@ -45,7 +56,25 @@ export type Decision = {
    * costs. The agent sets its own sample size from the context and the budget it
    * has left — this is the difference between a decision and a constant.
    */
-  plan: { signatures: number; rpcCalls: number; useLlm: boolean };
+  plan: {
+    signatures: number;
+    rpcCalls: number;
+    useLlm: boolean;
+    /**
+     * What the risk warranted before the budget was consulted. Coverage is measured
+     * against this, not against `signatures`: an agent that wanted 25 traces and
+     * planned 1 must report 4% coverage, not a flattering 100%.
+     */
+    wantedSignatures: number;
+  };
+  /**
+   * The agent asking for more than it was given, with the size of the ask and the
+   * reason. This is the point at which a scanner would simply return a thin result;
+   * an agent says what it could not confirm and how much it would need.
+   */
+  escalation?:
+    | { kind: 'needs_more_budget'; requestedRpcCalls: number; reason: string; whatItWouldConfirm: string }
+    | { kind: 'widen_to_authority'; reason: string };
   llmTokensUsed: number;
   /** Populated when an LLM decision was refused for a structural reason. */
   rejected?: { reason: string; detail?: Record<string, unknown> };
@@ -77,6 +106,7 @@ export function decisionTrace(d: Decision): Record<string, unknown> {
     rationale: d.rationale,
     signals: d.signals,
     plan: d.plan,
+    ...(d.escalation ? { escalation: d.escalation } : {}),
     llmTokensUsed: d.llmTokensUsed,
     ...(d.rejected ? { rejected: d.rejected } : {}),
   };

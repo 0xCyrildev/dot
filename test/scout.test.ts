@@ -7,7 +7,7 @@ import { Scout } from '../src/agent/scout.js';
 import { HttpTransport } from '../src/rpc/transport.js';
 import { SolanaClient } from '../src/rpc/client.js';
 import { BPF_LOADER_UPGRADEABLE } from '../src/ids.js';
-import { renderMarkdown } from '../src/report.js';
+import { formatEscalation, renderMarkdown } from '../src/report.js';
 import { FakeTransport, txFixture } from './helpers.js';
 
 const TARGET = '5PjDJaGfSPJj4tFzMRCiuuAasKg5n8dJKXKenhuwZexx';
@@ -94,23 +94,110 @@ describe('Scout: the bounded loop', () => {
     expect(report.decision?.rationale).toMatch(/unobserved/);
   });
 
-  it('keeps a partial graph and names the budget that stopped it when the trace pull runs dry', async () => {
+  it('plans inside the budget it has instead of running dry mid-pull', async () => {
     const transport = new FakeTransport();
     transport.route(accountRoute(AUTH));
     transport.route(sigsRoute(40));
     transport.route(txRoute(txFixture('tx-depth3')));
     const budget = new Budget({ maxRpcCalls: 4, maxSignatures: 40, maxLlmTokens: 0, maxWallMs: 600_000 });
-    const scout = makeScout(transport, budget);
-    const report = await scout.run({ program: TARGET });
+    const report = await makeScout(transport, budget).run({ program: TARGET });
 
-    expect(report.stoppedAt).toBe('act');
+    // Four calls left at Decide means the plan is ~2 signatures, so the run finishes
+    // within the ceiling. A constant-25 plan would have started a pull it could not
+    // complete and reported a partial graph as if the agent had chosen to stop.
+    const plan = report.decision!.plan as { signatures: number };
+    expect(plan.signatures).toBeLessThanOrEqual(3);
     expect(report.budget.spent.rpcCalls).toBeLessThanOrEqual(4);
+    expect(report.stoppedAt).toBe('report');
+    expect(report.decision!.escalation).toBeDefined();
+  });
+
+  it('keeps a partial graph and names the ceiling when the wall clock binds mid-pull', async () => {
+    // A derived plan fits its own call budget by construction, so the realistic
+    // partial case is time: each trace fetch burns wall clock, the run stops with a
+    // partial graph, and the report says so instead of calling itself complete.
+    let now = 1_000_000;
+    const clock = { now: () => now };
+    const transport = new FakeTransport();
+    transport.route(accountRoute(AUTH));
+    transport.route(sigsRoute(60));
+    transport.route({
+      match: (m: string) => m === 'getTransaction',
+      resultFn: () => {
+        now += 400;
+        return txFixture('tx-depth3');
+      },
+    });
+    const budget = new Budget({ maxRpcCalls: 200, maxSignatures: 200, maxLlmTokens: 0, maxWallMs: 1_500 }, clock);
+    const report = await makeScout(transport, budget).run({ program: TARGET });
+    expect(report.stoppedAt).toBe('act');
     expect(report.blastRadius).not.toBeNull();
     expect(report.blastRadius!.tracesAnalyzed).toBeGreaterThan(0);
+    expect(report.blastRadius!.tracesAnalyzed).toBeLessThan(25);
     expect(report.cappedBy).not.toBeNull();
     expect(report.limits.length).toBeGreaterThan(0);
-    // 1 read + 1 signature walk + 2 transaction fetches, then refused.
-    expect(transport.methodCounts().getTransaction).toBeLessThanOrEqual(3);
+  });
+
+  it('asks for more budget rather than returning a thin answer it calls complete', async () => {
+    const transport = new FakeTransport();
+    transport.route(accountRoute(AUTH));
+    transport.route(sigsRoute(40));
+    transport.route(txRoute(txFixture('tx-depth3')));
+    const tight = new Budget({ maxRpcCalls: 3, maxSignatures: 3, maxLlmTokens: 0, maxWallMs: 600_000 });
+    const report = await makeScout(transport, tight).run({ program: TARGET });
+    const esc = report.decision!.escalation as { kind: string; requestedRpcCalls: number; reason: string };
+    expect(esc.kind).toBe('needs_more_budget');
+    expect(esc.requestedRpcCalls).toBeGreaterThan(0);
+    expect(esc.reason).toMatch(/single key|authority/);
+    expect(esc.reason).toMatch(/cannot distinguish/);
+    expect(['P2', 'P3']).toContain(report.tier);
+    expect(report.confidence).toBe('low');
+    expect(report.cappedBy).not.toBeNull();
+  });
+
+  it('derives a smaller plan from a smaller budget — the plan is not a constant', async () => {
+    const run = async (maxRpcCalls: number, maxSignatures: number) => {
+      const transport = new FakeTransport();
+      transport.route(accountRoute(AUTH));
+      transport.route(sigsRoute(300));
+      transport.route(txRoute(txFixture('tx-depth3')));
+      const budget = new Budget({ maxRpcCalls, maxSignatures, maxLlmTokens: 0, maxWallMs: 600_000 });
+      return await makeScout(transport, budget).run({ program: TARGET });
+    };
+    const small = await run(10, 10);
+    const large = await run(400, 400);
+    const sp = small.decision!.plan as { signatures: number };
+    const lp = large.decision!.plan as { signatures: number };
+    expect(sp.signatures).toBeLessThan(lp.signatures);
+    // And the widened plan is capped by what a single key without prior graph wants,
+    // not by the 400 calls on offer.
+    expect(lp.signatures).toBeLessThanOrEqual(25);
+    expect(sp.signatures).toBeLessThanOrEqual(9);
+  });
+
+  it('widens to the authority history when a single-key program shows no dependents', async () => {
+    const transport = new FakeTransport();
+    transport.route(accountRoute(AUTH));
+    transport.route({
+      match: (m) => m === 'getSignaturesForAddress',
+      resultFn: () => Array.from({ length: 60 }, (_, i) => ({ signature: `a${i}`, slot: 4000 + i, err: null, blockTime: 1_760_000_000, confirmationStatus: 'finalized' })),
+    });
+    // A trace that touches the authority and one other program, but never TARGET.
+    const foreign = txFixture('tx-depth3');
+    const otherProgram = '5TeWSsjg2gbxCyWVniXeCmwM7UtHTCK7svzJr5xYJzHf';
+    foreign.transaction.message.instructions = [
+      { programId: otherProgram, accounts: [], data: 'x', stackHeight: 1 },
+      { programId: AUTH, accounts: [], data: 'y', stackHeight: 1 },
+    ];
+    foreign.meta.innerInstructions = null;
+    transport.route({ match: (m) => m === 'getTransaction', result: foreign });
+
+    const budget = new Budget({ maxRpcCalls: 200, maxSignatures: 200, maxLlmTokens: 0, maxWallMs: 600_000 });
+    const report = await makeScout(transport, budget).run({ program: TARGET });
+    expect(report.blastRadius!.directCallers).toBe(0);
+    expect(report.widenNote).toContain('co-invoked');
+    expect(report.coControlledPrograms).toContain(otherProgram);
+    expect(report.evidence.some((e) => /widening to the authority/.test(e.summary))).toBe(true);
   });
 
   it('records pruned history as a limit rather than as an absent dependency', async () => {
@@ -240,5 +327,29 @@ describe('cursor walk termination', () => {
     expect(sigCalls).toBeLessThanOrEqual(3);
     expect(report.evidence.some((e) => /no progress/.test(e.summary))).toBe(true);
     expect(report.budget.spent.rpcCalls).toBeLessThan(20);
+  });
+});
+
+describe('escalation is phrased as an ask, not a finding', () => {
+  it('prints the number of calls needed and the flag to raise', async () => {
+    const transport = new FakeTransport();
+    transport.route(accountRoute(AUTH));
+    transport.route(sigsRoute(30));
+    transport.route(txRoute(txFixture('tx-depth3')));
+    const budget = new Budget({ maxRpcCalls: 3, maxSignatures: 3, maxLlmTokens: 0, maxWallMs: 600_000 });
+    const report = await makeScout(transport, budget).run({ program: TARGET });
+    const line = formatEscalation(report);
+    expect(line).not.toBeNull();
+    expect(line).toContain('Dot needs');
+    expect(line).toContain('more RPC call(s) to confirm the blast radius');
+    expect(line).toContain('--budget-rpc +');
+    expect(line).toContain('this tier is capped by coverage');
+    // A run with no escalation must print nothing at all.
+    const wide = new FakeTransport();
+    wide.route(accountRoute(AUTH));
+    wide.route(sigsRoute(3));
+    wide.route(txRoute(txFixture('tx-depth3')));
+    const ok = await makeScout(wide, new Budget({ maxRpcCalls: 200, maxSignatures: 200 })).run({ program: TARGET });
+    expect(formatEscalation(ok)).toBeNull();
   });
 });

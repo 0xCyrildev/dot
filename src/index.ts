@@ -20,7 +20,7 @@ export {
 export { scoreRisk, tierFor, TIER_MEANING, type RiskTier, type ExposureSignals, type EvidenceSignals } from './score/risk.js';
 export { LIMIT_NOTES, limitsFor, type LimitNote } from './limits.js';
 export { resolveIdl, anchorIdlPda, diffIdl, type IdlOptions, type IdlResolution } from './idl.js';
-export { renderMarkdown, type DotReport } from './report.js';
+export { renderMarkdown, formatEscalation, type DotReport } from './report.js';
 export { ResilientClient, redactUrl, type Agreement, type QuorumRead } from './rpc/resilient.js';
 export { YellowstoneUpgradeFeed, classify as classifyLoaderAccount, MEASURED_ELF_OFFSET, type AccountUpdate, type LoaderAccountKind } from './rpc/yellowstone.js';
 export { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel, type IngestPlan } from './graph/batcher.js';

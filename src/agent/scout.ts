@@ -22,7 +22,13 @@ export type PriorDigest = {
   tier: string;
 };
 
+/** The sample the risk warranted; falls back to the planned size when unknown. */
+function decisionPlanWanted(built: { wantedSignatures?: number; planned: number }): number {
+  return built.wantedSignatures ?? built.planned;
+}
+
 export type ActResult = {
+  wantedSignatures?: number;
   graph: Graph;
   planned: number;
   found: number;
@@ -33,6 +39,15 @@ export type ActResult = {
   budgetLimited: boolean;
   duplicates: number;
   ingest: IngestRecord;
+  /** Which ledger was walked: the program's own, or its authority's. */
+  source: 'program' | 'authority_history';
+  /**
+   * Distinct programs appearing as a top-level instruction target across the sample.
+   * The CPI graph cannot answer "what else does this key touch" — two programs named
+   * side by side in one transaction produce no edge between them — so the widen path
+   * measures co-occurrence, which is the honest relation for co-control.
+   */
+  coInvokedPrograms: string[];
 };
 
 /**
@@ -93,6 +108,9 @@ export class Scout {
    */
   private integrityHalt: { agreement: string; reason: string; endpoints: unknown[] } | null = null;
   private lastQuorum: import('../rpc/resilient.js').QuorumRead | null = null;
+  /** Programs co-invoked with the upgrade authority — the reach of that one key. */
+  private coControlled: string[] = [];
+  private widenNote: string | null = null;
 
   constructor(opts: ScoutOptions) {
     this.o = { maxDepth: 3, ...opts };
@@ -122,6 +140,16 @@ export class Scout {
       return this.report(req.program, req.label, null, null, null, t0, 'perceive', 'ProgramData could not be read or decoded');
     }
 
+    // Decide is given the budget before it plans, so the sample size is derived from
+    // what is left rather than picked from a tier and clamped afterwards.
+    const snap = this.o.budget.snapshot();
+    ctx.budget = {
+      remainingRpcCalls: snap.remaining.rpcCalls,
+      remainingSignatures: snap.remaining.signatures,
+      elapsedMs: snap.elapsedMs,
+      maxWallMs: snap.limits.maxWallMs,
+    };
+
     const decision = await this.o.decision.decide(ctx, this.ledger);
     this.mark('decide', `${decision.source}: proceed=${decision.proceed} plan=${JSON.stringify(decision.plan)}`);
     if (!decision.proceed) {
@@ -136,6 +164,71 @@ export class Scout {
     // sees `report` would assume it was.
     if (built.budgetLimited) this.stoppedAt = 'act';
     const evaluated = this.evaluate(ctx, built);
+
+    // The widen path. A zero-dependent result on a program held by a single key is
+    // the weakest-looking and most dangerous combination in this tool, and the
+    // honest second move is not "re-scan the same program harder" — it is to ask what
+    // else the *same key* controls, because that is the actual blast radius of a
+    // compromised authority. It is reported as a separate field: co-controlled
+    // programs are not dependents, and merging them would be a category error.
+    /**
+     * Triggered by the finding, not by the escalation kind — but only when the sample
+     * was thick enough to make an empty dependent set mean something. Widening on a
+     * two-trace sample would be the agent reading significance into a gap in its own
+     * coverage, so a thin sample declines explicitly and says why.
+     */
+    const sampleIsMeaningful = built.found >= 3 && evaluated.evidence.sampleCoverage >= 0.5;
+    if (
+      evaluated.exposure.directCallers === 0 &&
+      ctx.authority.posture === 'eoa' &&
+      ctx.authority.after
+    ) {
+      if (!sampleIsMeaningful) {
+        this.widenNote = `widen skipped: ${built.found} trace(s) parsed at ${(evaluated.evidence.sampleCoverage * 100).toFixed(0)}% coverage — an empty dependent set here is a coverage gap, not a finding`;
+        this.ledger.add({ kind: 'limit', summary: this.widenNote, ref: { program: ctx.program } });
+      }
+      const authority = ctx.authority.after;
+      const widenBudgetOk = sampleIsMeaningful && this.o.budget.affordableSignatures(1) >= Math.min(10, decision.plan.signatures || 10);
+      this.ledger.add({
+        kind: 'limit',
+        summary: widenBudgetOk
+          ? `no attributed dependents for ${ctx.program} held by a single key; widening to the authority's own transaction history`
+          : `widen declined: no budget left to sample the authority history`,
+        ref: { program: ctx.program },
+      });
+      if (widenBudgetOk) {
+        try {
+          const widenPlan: Decision = {
+            ...decision,
+            plan: { ...decision.plan, signatures: Math.min(25, Math.max(10, decision.plan.signatures)) },
+          };
+          const widenBuilt = await this.act(authority, widenPlan, 'authority_history');
+          // Two relations, kept in one list but named separately: programs that shared a
+          // transaction with the authority (co-occurrence, the honest signal for
+          // co-control), and CPI edges touching it. Neither is a dependent of the
+          // program under review, and the field name says so.
+          const others = new Set<string>(widenBuilt.coInvokedPrograms);
+          for (const e of widenBuilt.graph.detailedEdges) {
+            if (e.from === authority) others.add(e.to);
+            if (e.to === authority) others.add(e.from);
+          }
+          others.delete(authority);
+          this.coControlled = [...others].filter((x) => x && x !== ctx.program).slice(0, 50);
+          this.widenNote =
+            `sampled ${widenBuilt.found} transaction(s) touching authority ${authority}; ` +
+            `${this.coControlled.length} other program(s) co-invoked or CPI-adjacent — reported as co-control, NOT as dependents`;
+          this.ledger.add({
+            kind: 'trace',
+            summary: this.widenNote,
+            ref: { program: authority },
+          });
+        } catch (e) {
+          if (!(e instanceof BudgetExhaustedError)) throw e;
+          this.widenNote = 'widen aborted: budget exhausted mid-authority-sample';
+        }
+      }
+    }
+
     // Do not clobber a stop recorded by `act`: a run that ran out of budget
     // mid-sample completed its *pipeline* but not its *plan*, and a reader who
     // sees stoppedAt "report" would assume the sample was whole.
@@ -256,9 +349,10 @@ export class Scout {
    * *from whom*. The caller is recovered entirely from the inner-instruction
    * fold, which is why that step has to be right.
    */
-  private async act(program: string, decision: Decision): Promise<ActResult> {
+  private async act(program: string, decision: Decision, source: 'program' | 'authority_history' = 'program'): Promise<ActResult> {
     const budget = this.o.budget;
     const planned = decision.plan.signatures;
+    void source;
     let stoppedReason: string | null = null;
     let budgetLimited = false;
 
@@ -327,6 +421,7 @@ export class Scout {
     }
 
     const builder = new GraphBuilder(program);
+    const coInvoked = new Set<string>();
     let found = 0;
     let pruned = 0;
     let errors = 0;
@@ -396,6 +491,7 @@ export class Scout {
           continue;
         }
         const tx = res.tx;
+        for (const ins of tx.transaction.message.instructions) coInvoked.add(ins.programId);
         const resolution = resolveAccountKeys(tx);
         const analysis = analyzeTrace(tx, resolution);
         builder.addTrace(sig.signature, tx, analysis);
@@ -437,11 +533,25 @@ export class Scout {
     for (const a of graph.anomalies) this.ledger.add({ kind: 'limit', summary: a, ref: { program } });
 
     const spanDays = oldestBlockTime !== null && newestBlockTime !== null ? (newestBlockTime - oldestBlockTime) / 86_400 : null;
-    return { graph, planned, found, pruned, fetchErrors: errors, stoppedReason, spanDays, budgetLimited, duplicates, ingest };
+    return {
+      graph,
+      planned,
+      found,
+      pruned,
+      fetchErrors: errors,
+      stoppedReason,
+      spanDays,
+      budgetLimited,
+      duplicates,
+      ingest,
+      source,
+      coInvokedPrograms: [...coInvoked],
+      wantedSignatures: decision.plan.wantedSignatures,
+    };
   }
 
   /** EVALUATE. Digest the graph into exposure, then price it against evidence quality. */
-  private evaluate(ctx: UpgradeContext, built: ActResult): {
+  private evaluate(ctx: UpgradeContext, built: ActResult & { wantedSignatures?: number }): {
     exposure: ExposureSignals;
     evidence: EvidenceSignals;
     risk: ReturnType<typeof scoreRisk>;
@@ -467,7 +577,8 @@ export class Scout {
       signaturesPruned: built.pruned,
       fetchErrors: built.fetchErrors,
       duplicateSignatures: built.duplicates,
-      sampleCoverage: built.planned === 0 ? 1 : Math.min(1, built.found / built.planned),
+      // Against what the risk wanted, not what the budget allowed the plan to be.
+      sampleCoverage: Math.min(1, built.found / Math.max(1, decisionPlanWanted(built))),
       attributionQuality: graph.attributionQuality,
       flattenedFrames: graph.flattenedFrames,
       logTruncated: graph.anomalies.some((a) => a.includes('truncated')),
@@ -581,6 +692,9 @@ export class Scout {
       cappedBy: built?.risk.cappedBy ?? stopNote,
       stoppedAt,
       stopNote,
+      ...(this.coControlled.length > 0 || this.widenNote
+        ? { coControlledPrograms: this.coControlled, widenNote: this.widenNote }
+        : {}),
       decision: decision ? decisionTrace(decision) : null,
       blastRadius: built
         ? {
