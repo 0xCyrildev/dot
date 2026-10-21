@@ -773,6 +773,17 @@ async function emit(report: DotReport, opts: { format: string; out?: string }): 
   if (opts.format === 'both') process.stdout.write(`${JSON.stringify({ tier: report.tier, score: report.score, stoppedAt: report.stoppedAt, rpcCalls: report.budget.spent.rpcCalls })}\n`);
 }
 
+/**
+ * A security tool gets piped, paged and grepped. Without this, `dot limits | head`
+ * kills the process with an unhandled EPIPE stack trace that looks like a crash in
+ * the analyzer rather than a closed stdout -- measured, because it happened during
+ * this build's own verification.
+ */
+process.stdout.on('error', (e: NodeJS.ErrnoException) => {
+  if (e.code === 'EPIPE') process.exit(0);
+  throw e;
+});
+
 program.parseAsync(process.argv).catch((e) => {
   process.stderr.write(`fatal: ${(e as Error).message}\n`);
   process.exitCode = 1;
