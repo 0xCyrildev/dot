@@ -202,3 +202,82 @@ describe('validation against a real compiled program', () => {
     expect(scan.found.length / names.byName.size).toBeGreaterThan(0.5);
   });
 });
+
+describe('account-requirement diff', () => {
+  /** The user's example: a new `withdraw` taking a writable account it does not constrain. */
+  it('flags a new entrypoint accepting a writable, unsigned, unconstrained account', () => {
+    const newIdl = {
+      instructions: [
+        { name: 'initialize', accounts: [] },
+        {
+          name: 'withdraw',
+          accounts: [
+            { name: 'authority', isSigner: true, isMut: false },
+            { name: 'vault', isSigner: false, isMut: true },
+            { name: 'systemProgram', isSigner: false, isMut: false, address: '11111111111111111111111111111111' },
+          ],
+        },
+      ],
+    };
+    const d = diffBytecode({
+      oldBytes: image(['initialize'], 137),
+      newBytes: Buffer.concat([image(['initialize', 'withdraw'], 137), Buffer.from([0x01])]),
+      oldIdl: idl(['initialize']),
+      newIdl,
+    });
+    const withdraw = d.accounts?.find((a) => a.instruction === 'withdraw');
+    expect(withdraw?.status).toBe('added');
+    expect(withdraw?.writableNonSigner).toEqual(['vault']);
+    // authority is a signer; systemProgram is address-constrained. Neither is flagged.
+    expect(withdraw?.writableNonSigner).not.toContain('authority');
+    expect(withdraw?.writableNonSigner).not.toContain('systemProgram');
+    expect(withdraw?.selectorLocated).toBe(true);
+    expect(renderBytecodeDiff(d, 'P')).toContain('writable, not a signer, not address-constrained: vault');
+    expect(d.limits.join(' ')).toMatch(/question to ask the author, not a vulnerability finding/);
+  });
+
+  it('reads legacy isMut/isSigner and modern writable/signer alike', () => {
+    const legacy = { instructions: [{ name: 'withdraw', accounts: [{ name: 'vault', isMut: false, isSigner: false }] }] };
+    const modern = { instructions: [{ name: 'withdraw', accounts: [{ name: 'vault', writable: true, signer: false }] }] };
+    const d = diffBytecode({
+      oldBytes: image(['withdraw']),
+      newBytes: Buffer.concat([image(['withdraw']), Buffer.from([9])]),
+      oldIdl: legacy,
+      newIdl: modern,
+    });
+    const w = d.accounts?.find((a) => a.instruction === 'withdraw');
+    expect(w?.status).toBe('accounts_changed');
+    expect(w?.shifts).toEqual([{ account: 'vault', from: 'vault', to: 'vault(w)' }]);
+    expect(w?.writableNonSigner).toEqual(['vault']);
+  });
+
+  it('treats a bare string account as unnamed permissions rather than as immutable', () => {
+    // Older IDLs list accounts as strings with no flags at all. Reporting "no writable
+    // accounts" for that would be a false negative, so the shape is preserved as-is.
+    const d = diffBytecode({
+      oldBytes: image(['withdraw']),
+      newBytes: Buffer.concat([image(['withdraw']), Buffer.from([9])]),
+      oldIdl: idl(['withdraw']),
+      newIdl: { instructions: [{ name: 'withdraw', accounts: ['vault', 'mint'] }] },
+    });
+    const w = d.accounts?.find((a) => a.instruction === 'withdraw');
+    expect(w?.added.map((a2) => a2.name).sort()).toEqual(['mint', 'vault']);
+    expect(w?.writableNonSigner).toEqual([]);
+    // String-only account entries carry no flags: the diff must say the mutability is
+    // unknown rather than reporting it as absent.
+    expect(w?.note).toMatch(/without permission flags/);
+    expect(w?.added.every((a2) => !a2.writable)).toBe(true);
+  });
+
+  it('says nothing is comparable when no IDL was supplied', () => {
+    const d = diffBytecode({ oldBytes: image(['initialize']), newBytes: Buffer.concat([image(['initialize']), Buffer.from([3])]) });
+    expect(d.accounts).toBeUndefined();
+    expect(d.accountsNote).toMatch(/no IDL pair supplied/i);
+  });
+
+  it('lists declared accounts without inventing a "change" on a first sighting', () => {
+    const d = diffBytecode({ oldBytes: null, newBytes: image(['withdraw']), newIdl: idl(['withdraw']) });
+    expect(d.accounts?.[0]?.status).toBe('added');
+    expect(d.accountsNote).toMatch(/nothing can be called changed/);
+  });
+});
