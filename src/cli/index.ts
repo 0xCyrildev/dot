@@ -21,6 +21,7 @@ import { ResilientClient } from '../rpc/resilient.js';
 import { BlockBatcher, loadCostModel, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
 import { resolveIdl } from '../idl.js';
 import { renderMarkdown, type DotReport } from '../report.js';
+import { BlastRadiusScanner, renderBlastRadius, loadProgramList, loadAuthorityMap } from '../commands/blastRadius.js';
 import { LIMIT_NOTES } from '../limits.js';
 import { TIER_MEANING } from '../score/risk.js';
 import { isDotError } from '../errors.js';
@@ -557,6 +558,93 @@ program
     };
     await writeFile(opts.out, JSON.stringify(model, null, 2));
     process.stdout.write(`${JSON.stringify(model, null, 2)}\nwrote ${opts.out}\n`);
+  });
+
+program
+  .command('blast-radius')
+  .description('ecosystem query: which upgrades in a window deserve a human, and who to notify')
+  .option('--rpc <url>', 'JSON-RPC endpoint (or DOT_RPC_URL)')
+  .option('--since <date>', 'ISO date; bounded by node retention and reported as such')
+  .option('--min-value <lamports>', 'ignore upgrades below this attributed value', '0')
+  .option('--min-dependents <n>', 'ignore upgrades with fewer dependents than this', '0')
+  .option('--programs <file>', 'restrict to a JSON array of program ids instead of discovering')
+  .option('--max-records <n>', 'loader transactions to examine', '40')
+  .option('--per-program-rpc <n>', 'RPC calls each program analysis may spend', '40')
+  .option('--daily-rpc <n>', 'total ceiling for the whole query', '1200')
+  .option('--authority-map <file>', 'JSON {authority: {label} or {m,n}}; threshold structure is not readable from chain data')
+  .option('--sol-usd <price>', 'operator-supplied price; no oracle, no invented USD')
+  .option('--depth <n>', 'transitive hops', '2')
+  .option('--format <fmt>', 'json | md | both', 'both')
+  .option('--out <dir>', 'write report files here')
+  .action(async (opts: { since?: string; minValue: string; minDependents: string; programs?: string; maxRecords: string; perProgramRpc: string; dailyRpc: string; authorityMap?: string; solUsd?: string; depth: string; format: string; out?: string; rpc?: string; commitment?: string }) => {
+    const o = opts as GlobalOpts & typeof opts;
+    const { client } = await build({ ...o, commitment: o.commitment ?? 'finalized', sample: o.perProgramRpc });
+    const spent = { total: 0 };
+    const analyze: (program: string) => Promise<any> = async (program) => {
+      const remaining = Number(opts.dailyRpc) - spent.total;
+      if (remaining < 8) throw new Error(`fair-share pool exhausted after ${spent.total} call(s)`);
+      const perProgram = new Budget({
+        maxRpcCalls: Math.min(Number(opts.perProgramRpc), remaining),
+        maxSignatures: Math.min(Number(opts.perProgramRpc), remaining),
+        maxLlmTokens: 0,
+        maxWallMs: 120_000,
+      });
+      const transport = new HttpTransport(opts.rpc ?? process.env.DOT_RPC_URL ?? DEFAULT_RPC);
+      const perClient = new SolanaClient({ transport, budget: perProgram, commitment: 'finalized' });
+      const rep = await new Scout({
+        client: perClient,
+        budget: perProgram,
+        decision: new RuleBasedDecision({}),
+        mode: 'rules',
+        maxDepth: Number(opts.depth),
+        ingest: 'signatures',
+      }).run({ program, forceFullTrace: true });
+      spent.total += rep.budget.spent.rpcCalls;
+      const deps = (rep.graph?.detailedEdges ?? [])
+        .filter((e) => e.to === program)
+        .slice(0, 8)
+        .map((e) => ({ program: e.from, authority: null as string | null, lamportsRouted: e.lamportsRouted }));
+      // The posture line is the only place Dot records the authority; parsing it back
+      // out is fragile, so keep the fragile part in one place and name it.
+      const posture = rep.evidence.find((e) => e.kind === 'posture')?.summary ?? '';
+      const authority = posture.match(/authority=(\S+)\s/)?.[1] ?? null;
+      return {
+        dependents: rep.blastRadius?.directCallers ?? 0,
+        transitiveDependents: rep.blastRadius?.transitiveCallers ?? 0,
+        lamportsRouted: rep.blastRadius?.lamportsRouted ?? 0,
+        mintsTouched: rep.blastRadius?.mintsTouched ?? 0,
+        authority: authority === 'RENOUNCED' ? null : authority,
+        detail: { dependents: deps, stoppedAt: rep.stoppedAt, attribution: rep.blastRadius?.attributionQuality ?? null },
+      };
+    };
+    const scanner = new BlastRadiusScanner(client, analyze);
+    const since = opts.since ? Math.floor(new Date(opts.since).getTime() / 1000) : null;
+    if (opts.since && Number.isNaN(since)) {
+      process.stderr.write(`error: --since "${opts.since}" is not a parseable date\n`);
+      process.exitCode = 2;
+      return;
+    }
+    const authorityMap = opts.authorityMap ? await loadAuthorityMap(opts.authorityMap) : undefined;
+    const programs = opts.programs ? await loadProgramList(opts.programs) : undefined;
+    const result = await scanner.run({
+      maxRecords: Number(opts.maxRecords),
+      minValueLamports: Number(opts.minValue),
+      minDependents: Number(opts.minDependents),
+      ...(since ? { since } : {}),
+      ...(programs ? { programs } : {}),
+      ...(authorityMap ? { authorityMap } : {}),
+      solUsd: opts.solUsd ? Number(opts.solUsd) : null,
+    });
+    const md = renderBlastRadius(result);
+    if (opts.format === 'json') process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    else if (opts.out) {
+      const base = `${opts.out}/blast-radius-${new Date().toISOString().slice(0, 10)}`;
+      await writeFile(`${base}.json`, JSON.stringify(result, null, 2));
+      await writeFile(`${base}.md`, md);
+      process.stdout.write(`wrote ${base}.json and ${base}.md\n`);
+    } else {
+      process.stdout.write(`${md}\n${JSON.stringify({ programs: result.ranked.length, ranked: result.ranked.map((r) => r.program), spent: spent.total })}\n`);
+    }
   });
 
 program
