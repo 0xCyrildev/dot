@@ -66,7 +66,7 @@ VALUE_IS_PROXY  (always)
 PDA_HOLDINGS_NOT_ENUMERATED  (always)
   Program-held vaults are only enumerable with a declared seed list
   blind: TVL sitting in a program’s PDAs is not visible from the transaction sample, and the seeds that derive those PDAs live in the deployment repo. Dot can only read custody for seed patterns an operator has declared; for everyone else the figure stays unknown, and unknown is printed as unknown. Typed seeds matter too: the encoding `u8:0` is the byte 0x00, and hashing the ASCII character for zero instead derives a different address that resolves to nothing.
-  out:   `--seeds seeds.example.json` derives each PDA, reads them in `getMultipleAccounts` chunks of up to 100, and sums lamports plus raw token units per mint. It reports unresolved seed variables, absent accounts and an incomplete sweep separately — see `renderHoldings`, which refuses to print a USD figure and states that absence is not zero holdings.
+  out:   `--seeds seeds.example.json` derives each PDA, reads them in `getMultipleAccounts` chunks of up to 100, and sums lamports plus raw token units per mint. It reports unresolved seed variables, absent accounts and an incomplete sweep separately — see `renderHoldings`, which refuses to print a USD figure and states that absence is not zero holdings. `seeds-live.json` is a worked example whose every derived address was checked against mainnet (`docs/live-seeds-2026-10-21.json`); note that the figures it produced are a snapshot of live trader accounts, so the amount is read from the same instant, never compared to a value recorded yesterday.
 
 FAILED_TRANSACTIONS_ROLLED_BACK  (when triggered)
   A failed transaction moved nothing

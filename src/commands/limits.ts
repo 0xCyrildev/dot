@@ -222,10 +222,10 @@ export const LIMIT_STATUS: LimitStatus[] = [
     code: 'PDA_HOLDINGS_NOT_ENUMERATED',
     state: 'NARROWED',
     change:
-      'Routed value is still labelled as routed, never as custody. Additionally `--seeds` now derives PDAs from an operator-declared seed list, reads them in getMultipleAccounts chunks of up to 100, and sums lamports and raw token units per mint, with typed seed encodings (u8:1 vs the character "1") handled explicitly.',
+      'Routed value is still labelled as routed, never as custody. Additionally `--seeds` now derives PDAs from an operator-declared seed list, reads them in getMultipleAccounts chunks of up to 100, and sums lamports and raw token units per mint, with typed seed encodings (u8:1 vs the character "1") handled explicitly. The path is exercised against mainnet, not only against fixtures: `seeds-live.json` derives seven patterns, five resolve to accounts the chain named, one is a well-formed address holding nothing, one is an unresolvable `$user`, and the run summed 1,042,041,147,090 lamports and 986,570,981,170 raw units of `So1111…1112` in one batched call (`docs/live-seeds-2026-10-21.json`).',
     remains:
-      'Only declared patterns are read. The seeds live in the deployment repo and a publisher who does not share them has, by construction, no observable custody — `unresolvedSeeds`, `accountsEmpty` and `complete:false` are reported so an absent figure is never shown as a zero one. No USD value is printed: there is no price oracle.',
-    tests: ['test/seeds.test.ts'],
+      'Only declared patterns are read. The seeds live in the deployment repo and a publisher who does not share them has, by construction, no observable custody — `unresolvedSeeds`, `accountsEmpty` and `complete:false` are reported so an absent figure is never shown as a zero one. No USD value is printed: there is no price oracle. And the figure is a snapshot: three of the five accounts in that live run belong to active traders, and a batched sum compared against individual reads a second later differed by 1,041,968 lamports — a trade, not a bug, which is why the exact-equality assertion in `test/seeds-live.test.ts` is made against ProgramData rent reserves, the accounts that cannot move except by upgrade.',
+    tests: ['test/seeds.test.ts', 'test/seeds-live.test.ts'],
     fix: 'Publish the seed patterns in the deployment repo, or use an indexer/DAS API for programs that will not.',
   },
 ];

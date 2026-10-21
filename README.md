@@ -101,7 +101,8 @@ Verified by symlinking both names and running them: `dot-limits` prints the limi
 Nothing in a `.env` is required. No API key is read unless you ask for model reasoning.
 
 ```bash
-dot analyze JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 --depth 2 --seeds seeds.example.json
+dot analyze <program_id> --depth 2 --seeds seeds.example.json      # declared PDAs → custody
+dot analyze FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf --seeds seeds-live.json   # the worked example
 dot blast-radius --since 2026-10-20 --min-value 100000000000 --authority-map authorities.json
 dot watch --targets targets.example.json --interval 30000 --secondary-rpc <url>
 dot watch --yellowstone <grpc-url> --per-event-rpc 50 --daily-rpc 5000
@@ -461,7 +462,7 @@ change). `docs/live-limits-for-2026-10-21.md` is a real run against a mainnet pr
 | `PROGRAMDATA_REVERSE_LOOKUP` | A `ProgramData` write does not name its program, and PDA derivation is one-way. Unresolvable events are counted and skipped, never guessed. |
 | `NO_IDL_CONTRACT` | No mandatory on-chain interface. No IDL → no semantic claim; `narrative.refused = "idl_unavailable"`. |
 | `VALUE_IS_PROXY` | Routed value is a per-transaction upper-bound proxy; a swap cannot be split into legs. |
-| `PDA_HOLDINGS_NOT_ENUMERATED` | Vault custody is invisible without a seed list or an indexer. Routed ≠ held. |
+| `PDA_HOLDINGS_NOT_ENUMERATED` | Vault custody is invisible without a seed list or an indexer. Routed ≠ held. `--seeds` is exercised live (`seeds-live.json`, `docs/live-seeds-2026-10-21.json`): 5 accounts read, 1 absent, 1 unresolved seed, one batched call — and the figures are a snapshot of live accounts, not a constant. |
 | `FAILED_TRANSACTIONS_ROLLED_BACK` | Failed CPIs are populated in the response but moved nothing; counted separately. |
 | `SIGNATURE_INDEX_IS_KEY_BASED` | The index matches account keys, not roles, so samples contain noise. |
 | `ADDRESS_TABLE_RESOLUTION` | Wrong v0 key composition misattributes edges silently. `keys.method` is reported. |

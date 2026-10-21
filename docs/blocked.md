@@ -31,6 +31,19 @@ same numbers reproduced on a second run):
   occurrences of which 20 failed, `lamportsRouted 63,723,520`, tier `P2`, `cappedBy`
   "only 32% of the planned sample was retrievable from the node", exit 4 with a priced
   hypothesis.
+- `dot analyze FuCKerMR… --seeds seeds-live.json` summed real custody off mainnet: 7 declared
+  patterns → 6 derived, **5 accounts read, 1 well-formed address holding nothing, 1 unresolvable
+  `$user`**, one batched `getMultipleAccounts` call, `1,042,041,147,090` lamports and
+  `986,570,981,170` raw units of `So1111…1112` (`docs/live-seeds-2026-10-21.json`). The three
+  token accounts are ATAs derived from (owner, mint) pairs taken out of a captured mainnet
+  transaction, and the derivation reproduces the addresses that transaction named — so the
+  rule is checked against the chain, not against a fixture written to match the code.
+  Two caveats that are the point of the exercise: those accounts belong to **active traders**,
+  so the figure is a snapshot (comparing the batched sum with individual reads a second later
+  differed by 1,041,968 lamports — a trade, not a bug; `test/seeds-live.test.ts` therefore
+  asserts exact equality only against ProgramData rent reserves, which cannot move except by
+  upgrade); and they are wallets and rent reserves, **not** a protocol's vault, so nothing here
+  certifies any protocol's TVL. What it certifies is that `--seeds` does what it says.
 - Discovery works: `getSignaturesForAddress(BPFLoaderUpgradeable)` + local PDA
   re-derivation produced a real (program, programData) pair from live data.
 - Two providers disagree about *retention*, not about the chain: one endpoint had a sampled
@@ -55,8 +68,10 @@ Still not done:
   against its own provider; `docs/blocked.md` does not claim otherwise.
 - `dot blast-radius` has ranked one real loader window, not a full sweep, and its ranking
   model is still mostly fixture-tested.
-- `dot analyze --seeds` has summed no real vault. The derivation is proven against a
-  captured mainnet ProgramData PDA (`test/seeds.test.ts`); no live balance read has run.
+- `dot analyze --seeds` has now summed live accounts, but the declared patterns are ones this
+  repo can verify on its own (ATA(owner, mint) and loader ProgramData), **not a protocol's own
+  seed set**. Summing a real program's vault still needs the seeds from its deployment repo —
+  `test/seeds.test.ts` and `seeds-live.json` prove the mechanism, not any protocol's custody.
 - No second *independent provider* — publicnode and mainnet-beta are both public
   endpoints, and the report says a hostname is not proof of independence.
 

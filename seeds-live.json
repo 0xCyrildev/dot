@@ -1,0 +1,44 @@
+[
+  {
+    "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "seed_template": ["6tv7sUQ4R3fE9rnBX4w72oiiqSHqKF3KPvyubFNfazxd", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "So11111111111111111111111111111111111111112"],
+    "account_type": "SPL",
+    "label": "ATA(owner, mint) for a pair read out of a captured mainnet transaction — the derivation is checkable, the account is real"
+  },
+  {
+    "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "seed_template": ["7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "So11111111111111111111111111111111111111112"],
+    "account_type": "SPL",
+    "label": "second owner, same mint"
+  },
+  {
+    "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "seed_template": ["5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "So11111111111111111111111111111111111111112"],
+    "account_type": "SPL",
+    "label": "third owner, same mint"
+  },
+  {
+    "program_id": "BPFLoaderUpgradeab1e11111111111111111111111",
+    "seed_template": ["FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf"],
+    "account_type": "RAW",
+    "label": "ProgramData of a program upgraded on 2026-10-21 — the rent reserve, not user custody"
+  },
+  {
+    "program_id": "BPFLoaderUpgradeab1e11111111111111111111111",
+    "seed_template": ["pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"],
+    "account_type": "RAW",
+    "label": "ProgramData of the pool program whose transaction this harness captured"
+  },
+  {
+    "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "seed_template": ["dot-absent-vault-2026-10-21"],
+    "account_type": "SPL",
+    "label": "a well-formed PDA that holds nothing, so the run proves absence is reported as absence"
+  },
+  {
+    "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "seed_template": ["$user"],
+    "account_type": "SPL",
+    "label": "unresolvable without a per-user value; Dot must report it, not guess it"
+  }
+]
