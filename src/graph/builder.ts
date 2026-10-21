@@ -1,7 +1,20 @@
 import { Buffer } from 'node:buffer';
+import base58 from 'bs58';
 import { isNoiseProgram } from '../ids.js';
 import type { WireGetTransactionResult, WireTokenBalance } from '../rpc/wire.js';
 import type { CallFrame, TraceAnalysis } from './normalize.js';
+
+/** An instruction data blob's leading 8 bytes, as hex, or null when the node gave no data. */
+export function leadingSelector(data: string | undefined | null): string | null {
+  if (!data || data.length === 0) return null;
+  try {
+    const bytes = base58.decode(data);
+    if (bytes.length < 8) return null;
+    return Buffer.from(bytes.subarray(0, 8)).toString('hex');
+  } catch {
+    return null;
+  }
+}
 
 export type GraphEdge = {
   from: string;
@@ -20,6 +33,14 @@ export type GraphEdge = {
    */
   lamportsRouted: number;
   tokenMintsTouched: string[];
+  /**
+   * First 8 bytes of each call's instruction data, counted. For an Anchor program this
+   * *is* the instruction selector, so an edge records not just that A called B but which
+   * entrypoint A reached -- which is what makes "3 of the 14 dependents route through the
+   * newly added instruction" a computable statement instead of a guess.
+   * Empty for instructions the node returned parsed (no data field).
+   */
+  selectors: Array<{ hex: string; count: number }>;
   /** Frames whose parent was inferred by flattening rather than by stackHeight or logs. */
   flattenedAttributions: number;
   firstSeenSlot: number;
@@ -107,7 +128,7 @@ export function traceValue(tx: WireGetTransactionResult, keyCount: number): Trac
 }
 
 export class GraphBuilder {
-  private readonly edges = new Map<string, GraphEdge & { txSet: Set<string>; mintSet: Set<string> }>();
+  private readonly edges = new Map<string, GraphEdge & { txSet: Set<string>; mintSet: Set<string>; selectorCounts: Map<string, number> }>();
   private readonly nodes = new Map<string, ProgramNode>();
   private tracesAnalyzed = 0;
   private tracesFailed = 0;
@@ -153,6 +174,7 @@ export class GraphBuilder {
           transactions: 0,
           lamportsRouted: 0,
           tokenMintsTouched: [],
+          selectors: [],
           flattenedAttributions: 0,
           firstSeenSlot: tx.slot,
           lastSeenSlot: tx.slot,
@@ -160,6 +182,7 @@ export class GraphBuilder {
           supplyChain: !isNoiseProgram(from) && !isNoiseProgram(to),
           txSet: new Set<string>(),
           mintSet: new Set<string>(),
+          selectorCounts: new Map<string, number>(),
         };
         this.edges.set(id, edge);
       }
@@ -185,6 +208,8 @@ export class GraphBuilder {
         // but no value claim is made for it.
       }
       edge.txSet.add(signature);
+      const sel = leadingSelector(frame.instruction.data);
+      if (sel !== null) edge.selectorCounts.set(sel, (edge.selectorCounts.get(sel) ?? 0) + 1);
       if (tx.slot < edge.firstSeenSlot) edge.firstSeenSlot = tx.slot;
       if (tx.slot > edge.lastSeenSlot) {
         edge.lastSeenSlot = tx.slot;
@@ -232,6 +257,10 @@ export class GraphBuilder {
         transactions: e.txSet.size,
         lamportsRouted: e.lamportsRouted,
         tokenMintsTouched: [...e.mintSet].sort(),
+        selectors: [...e.selectorCounts.entries()]
+          .map(([hex, count]) => ({ hex, count }))
+          .sort((a, b) => b.count - a.count || a.hex.localeCompare(b.hex))
+          .slice(0, 32),
         flattenedAttributions: e.flattenedAttributions,
         firstSeenSlot: e.firstSeenSlot,
         lastSeenSlot: e.lastSeenSlot,

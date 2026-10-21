@@ -697,6 +697,14 @@ program
         .filter((e) => e.to === program)
         .slice(0, 8)
         .map((e) => ({ program: e.from, authority: null as string | null, lamportsRouted: e.lamportsRouted }));
+      const edgePool = (rep.graph?.detailedEdges ?? []).map((e) => ({
+        from: e.from,
+        to: e.to,
+        count: e.count,
+        lamportsRouted: e.lamportsRouted,
+        selectors: (e.selectors ?? []).map((x) => x.hex),
+      }));
+      const added = (rep.bytecodeDiff?.instructions?.added ?? []).map((a) => ({ name: a.name, selector: a.hex }));
       // The posture line is the only place Dot records the authority; parsing it back
       // out is fragile, so keep the fragile part in one place and name it.
       const posture = rep.evidence.find((e) => e.kind === 'posture')?.summary ?? '';
@@ -708,6 +716,8 @@ program
         mintsTouched: rep.blastRadius?.mintsTouched ?? 0,
         authority: authority === 'RENOUNCED' ? null : authority,
         detail: { dependents: deps, stoppedAt: rep.stoppedAt, attribution: rep.blastRadius?.attributionQuality ?? null },
+        edges: edgePool,
+        addedEntrypoints: added,
       };
     };
     const scanner = new BlastRadiusScanner(client, analyze);
@@ -727,6 +737,7 @@ program
       ...(programs ? { programs } : {}),
       ...(authorityMap ? { authorityMap } : {}),
       solUsd: opts.solUsd ? Number(opts.solUsd) : null,
+      depth: Number(opts.depth),
     });
     const md = renderBlastRadius(result);
     if (opts.format === 'json') process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

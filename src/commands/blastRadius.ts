@@ -40,6 +40,89 @@ export type UpgradeRecord = {
   lamportsTouched: number;
 };
 
+/** A directed call edge as observed by any analysis in this run. */
+export type ObservedEdge = {
+  from: string;
+  to: string;
+  count: number;
+  lamportsRouted: number;
+  /** Leading 8 bytes of the calls on this edge; for Anchor, the instruction selectors. */
+  selectors: string[];
+};
+
+export type AddedEntrypoint = { name: string; selector: string | null };
+
+/**
+ * A caller reached through the global graph, with its hop distance.
+ *
+ * A transitive dependent is genuinely less exposed than a direct one — the upgrade
+ * reaches it through an intermediary that may absorb the change — but it is not zero,
+ * because behaviour changes propagate through callers that assume the old behaviour.
+ * So depth is carried into the weighting as 1/depth and printed alongside every count,
+ * never folded into a single "dependents" number.
+ */
+export type ReachedProgram = { program: string; depth: number; via: string; count: number; lamportsRouted: number; weight: number };
+
+/** Reach set for one upgraded program, computed over the union of all observed edges. */
+export function multiHop(edges: ObservedEdge[], target: string, depth: number): { direct: ReachedProgram[]; transitive: ReachedProgram[]; byDepth: Map<number, ReachedProgram[]> } {
+  const callersOf = new Map<string, ObservedEdge[]>();
+  for (const e of edges) {
+    const list = callersOf.get(e.to) ?? [];
+    list.push(e);
+    callersOf.set(e.to, list);
+  }
+  // The target is marked seen before the walk: with a call cycle in the graph
+  // (A -> B -> A, or a program that calls a sibling which calls back), an
+  // unseeded set lets the upgraded program reappear as one of its own transitive
+  // dependents, which would inflate both the count and the ranking.
+  const seen = new Map<string, ReachedProgram>([[target, { program: target, depth: 0, via: target, count: 0, lamportsRouted: 0, weight: 0 }]]);
+  const byDepth = new Map<number, ReachedProgram[]>();
+  let frontier = [target];
+  for (let d = 1; d <= Math.max(1, depth) && frontier.length > 0; d++) {
+    const found: ReachedProgram[] = [];
+    const next: string[] = [];
+    for (const node of frontier) {
+      for (const e of callersOf.get(node) ?? []) {
+        if (e.from === node || seen.has(e.from) || isNoiseProgram(e.from)) continue;
+        const reached: ReachedProgram = {
+          program: e.from,
+          depth: d,
+          via: node,
+          count: e.count,
+          lamportsRouted: e.lamportsRouted,
+          weight: 1 / d,
+        };
+        seen.set(e.from, reached);
+        found.push(reached);
+        next.push(e.from);
+      }
+    }
+    if (found.length > 0) byDepth.set(d, found);
+    frontier = next;
+  }
+  return {
+    direct: byDepth.get(1) ?? [],
+    transitive: [...byDepth.entries()].filter(([d]) => d > 1).flatMap(([, v]) => v),
+    byDepth,
+  };
+}
+
+/** Which callers reach the target *through a specific instruction selector*. */
+export function callersViaSelector(edges: ObservedEdge[], target: string, selector: string, depth: number): ReachedProgram[] {
+  const direct = edges.filter((e) => e.to === target && e.selectors.includes(selector)).map((e) => ({
+    program: e.from,
+    depth: 1,
+    via: target,
+    count: e.count,
+    lamportsRouted: e.lamportsRouted,
+    weight: 1,
+  }));
+  const directSet = new Set(direct.map((d) => d.program));
+  const deeper = multiHop(edges, target, depth).transitive.filter((t) => !directSet.has(t.program));
+  void deeper;
+  return direct;
+}
+
 export type ProgramAssessment = {
   program: string;
   upgrades: number;
@@ -53,6 +136,15 @@ export type ProgramAssessment = {
   authorityLabel: string;
   /** Composite rank, with its arithmetic exposed rather than multiplied away. */
   rank: { dependentsScore: number; valueScore: number; composite: number; formula: string };
+  /** Depth-aware reach, when a global edge pool was supplied. */
+  reach?: { direct: number; transitive: number; byDepth: Record<number, string[]>; weightedDependents: number };
+  /** Correlation between a newly added entrypoint and who actually calls it. */
+  addedEntrypointExposure?: Array<{
+    name: string;
+    selector: string | null;
+    directCallersOnSelector: number;
+    note: string;
+  }>;
   detail?: Record<string, unknown>;
 };
 
@@ -67,6 +159,11 @@ export type ScanOptions = {
   minDependents: number;
   /** Restrict to a program list instead of discovering from the loader index. */
   programs?: string[];
+  /** Hops of dependent reach to compute. 1 is the old direct-only behaviour. */
+  depth?: number;
+  /** Union of edges seen across all analyses in this run; enables multi-hop without new calls. */
+  edgePool?: ObservedEdge[];
+  addedEntrypointsByProgram?: Map<string, AddedEntrypoint[]>;
   solUsd?: number | null;
   authorityMap?: Map<string, AuthorityDeclaration>;
 };
@@ -78,11 +175,17 @@ export type AnalyzeProgram = (program: string) => Promise<{
   mintsTouched: number;
   authority: string | null;
   detail?: Record<string, unknown>;
+  /** Observed call edges, so the scanner can build multi-hop reach across programs. */
+  edges?: ObservedEdge[];
+  /** Entrypoints the Section-1 bytecode diff found added, with their selectors. */
+  addedEntrypoints?: AddedEntrypoint[];
 }>;
 
 export type ScanResult = {
   records: UpgradeRecord[];
   ranked: ProgramAssessment[];
+  /** Union of every observed edge; lets a caller re-derive reach without new RPC. */
+  edgePool?: ObservedEdge[];
   skipped: { noProgramPair: number; pruned: number; errors: number; belowThreshold: number; budgetStops: number };
   discovery: {
     method: string;
@@ -218,7 +321,7 @@ export class BlastRadiusScanner {
    * three numbers appear together in the report. A reader can disagree with the
    * weighting without having to reverse-engineer it.
    */
-  async rank(records: UpgradeRecord[], opts: ScanOptions): Promise<{ ranked: ProgramAssessment[]; belowThreshold: number }> {
+  async rank(records: UpgradeRecord[], opts: ScanOptions): Promise<{ ranked: ProgramAssessment[]; belowThreshold: number; pool: ObservedEdge[] }> {
     const byProgram = new Map<string, UpgradeRecord[]>();
     for (const r of records) {
       const list = byProgram.get(r.program) ?? [];
@@ -230,8 +333,14 @@ export class BlastRadiusScanner {
         if (!opts.programs.includes(key)) byProgram.delete(key);
       }
     }
+    const depth = Math.max(1, opts.depth ?? 1);
 
-    const out: ProgramAssessment[] = [];
+    // Pass 1: analyse each program and grow a shared edge pool. Multi-hop has to be
+    // computed after the pool exists, or the second program's view of the graph is
+    // whatever the first program happened to observe.
+    type Partial = { program: string; list: UpgradeRecord[]; assessed: Awaited<ReturnType<AnalyzeProgram>> };
+    const collected: Partial[] = [];
+    const pool: ObservedEdge[] = [...(opts.edgePool ?? [])];
     let belowThreshold = 0;
     for (const [program, list] of byProgram) {
       let assessed;
@@ -241,43 +350,88 @@ export class BlastRadiusScanner {
         if (e instanceof BudgetExhaustedError) break;
         continue;
       }
-      const dependentsScore = logScale(assessed.dependents + assessed.transitiveDependents, 200);
+      for (const e of assessed.edges ?? []) pool.push(e);
+      const live = assessed.dependents + assessed.transitiveDependents;
+      const dedupedValue = assessed.lamportsRouted;
+      if (dedupedValue < opts.minValueLamports && live < opts.minDependents) {
+        belowThreshold++;
+        continue;
+      }
+      collected.push({ program, list, assessed });
+    }
+
+    // Pass 2: reach over the whole pool, then score.
+    const out: ProgramAssessment[] = [];
+    for (const { program, list, assessed } of collected) {
+      const reach = multiHop(pool, program, depth);
+      const reachSeen = reach.direct.length + reach.transitive.length;
+      /**
+       * Weighting. When the pooled edges produced a reach set, use it. When they did
+       * not -- an analysis that only reported counts, or a run where the graph came
+       * from a different program's traces -- fall back to that program's own numbers
+       * rather than scoring zero, because a missing edge pool is an absence of data
+       * and must not read as an absence of dependents. Transitive dependents from the
+       * per-program view carry no known depth, so they get the depth-2 weight.
+       */
+      const weighted =
+        reachSeen > 0
+          ? reach.direct.length + reach.transitive.reduce((sum, t) => sum + t.weight, 0)
+          : assessed.dependents + assessed.transitiveDependents / 2;
+      const dependentsScore = logScale(weighted, 200);
       const valueScore = valueScale(assessed.lamportsRouted);
       const composite = valueScore * (1 + dependentsScore);
       const declared = assessed.authority ? opts.authorityMap?.get(assessed.authority)?.label ?? null : null;
-      const entry: ProgramAssessment = {
+      const added = assessed.addedEntrypoints ?? opts.addedEntrypointsByProgram?.get(program) ?? [];
+      out.push({
         program,
         upgrades: list.length,
         lastSlot: Math.max(...list.map((x) => x.slot)),
         lastBlockTime: list.map((x) => x.blockTime).filter((x): x is number => typeof x === 'number').sort((a, b) => b - a)[0] ?? null,
-        dependents: assessed.dependents,
-        transitiveDependents: assessed.transitiveDependents,
+        dependents: reach.direct.length || assessed.dependents,
+        transitiveDependents: reach.direct.length > 0 || reach.transitive.length > 0 ? reach.transitive.length : assessed.transitiveDependents,
         lamportsRouted: assessed.lamportsRouted,
         mintsTouched: assessed.mintsTouched,
         authority: assessed.authority,
         authorityLabel: declared ?? authorityFallback(assessed.authority),
         rank: { dependentsScore, valueScore, composite, formula: RANK_FORMULA },
-        ...(assessed.detail ? { detail: assessed.detail } : {}),
-      };
-      if (assessed.lamportsRouted < opts.minValueLamports && entry.dependents < opts.minDependents) {
-        belowThreshold++;
-        continue;
-      }
-      out.push(entry);
+        reach: {
+          direct: reach.direct.length,
+          transitive: reach.transitive.length,
+          byDepth: Object.fromEntries([...reach.byDepth.entries()].map(([d, v]) => [d, v.map((x) => x.program)])),
+          weightedDependents: Math.round(weighted * 100) / 100,
+        },
+        addedEntrypointExposure: added.map((a) => {
+          const onSelector = a.selector ? callersViaSelector(pool, program, a.selector, depth) : [];
+          return {
+            name: a.name,
+            selector: a.selector,
+            directCallersOnSelector: onSelector.length,
+            note:
+              !a.selector
+                ? 'selector unknown (no IDL name to hash, or no name to derive one from): cannot tell who already calls this entrypoint'
+                : onSelector.length > 0
+                  ? `${onSelector.length} observed caller(s) already send this selector — the new path has live traffic on it`
+                  : 'no observed caller sends this selector yet: the path is reachable but currently unused in the sample',
+          };
+        }),
+        detail: { ...(assessed.detail ?? {}), reach },
+      });
     }
     return {
       ranked: out.sort((a, b) => b.rank.composite - a.rank.composite || b.lamportsRouted - a.lamportsRouted),
       belowThreshold,
+      pool,
     };
   }
 
   async run(opts: ScanOptions & { since?: number | null }): Promise<ScanResult> {
     const { records, discovery, skipped } = await this.discover({ maxRecords: opts.maxRecords, ...(opts.since ? { since: opts.since } : {}) });
-    const { ranked, belowThreshold } = await this.rank(records, opts);
+    const { ranked, belowThreshold, pool } = await this.rank(records, opts);
     return {
       records,
       ranked,
       skipped: { ...skipped, belowThreshold },
+      edgePool: pool,
       discovery,
       value: {
         unit: 'lamports',
@@ -436,12 +590,12 @@ export function renderBlastRadius(r: ScanResult): string {
     L.push('Nothing ranked. This is a statement about what this node would return, not about the chain.');
     return L.join('\n');
   }
-  L.push('| rank | program | upgrades | dependents | +transitive | lamports routed | mints | authority |');
-  L.push('| ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |');
+  L.push('| rank | program | upgrades | direct | transitive | weighted | lamports routed | mints | authority |');
+  L.push('| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
   r.ranked.forEach((a, i) => {
     const usd = r.value.usdPerSol ? ` ($${((a.lamportsRouted / 1e9) * r.value.usdPerSol).toLocaleString(undefined, { maximumFractionDigits: 0 })})` : '';
     L.push(
-      `| ${i + 1} | \`${short(a.program)}\` | ${a.upgrades} | ${a.dependents} | ${a.transitiveDependents} | ${a.lamportsRouted.toLocaleString()}${usd} | ${a.mintsTouched} | ${a.authorityLabel} |`,
+      `| ${i + 1} | \`${short(a.program)}\` | ${a.upgrades} | ${a.reach?.direct ?? a.dependents} | ${a.reach?.transitive ?? a.transitiveDependents} | ${(a.reach?.weightedDependents ?? a.dependents).toFixed(2)} | ${a.lamportsRouted.toLocaleString()}${usd} | ${a.mintsTouched} | ${a.authorityLabel} |`,
     );
   });
   L.push('');
