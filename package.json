@@ -1,5 +1,5 @@
 {
-  "name": "dot-blast-radius",
+  "name": "@zeroxcyril/dot",
   "version": "0.1.0",
   "description": "Agentic Solana blast-radius analyzer: watches BPFLoaderUpgradeable upgrades and rebuilds the on-chain CPI supply chain from execution traces.",
   "type": "module",
@@ -22,7 +22,10 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "skill",
+    "README.md",
+    "LICENSE",
+    "targets.example.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -56,5 +59,13 @@
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^5.0.5"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xCyrildev/Dot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0xCyrildev/Dot/issues"
+  },
+  "homepage": "https://github.com/0xCyrildev/Dot#readme"
 }

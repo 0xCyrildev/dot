@@ -48,19 +48,31 @@ about the evidence Dot was allowed to gather, not an all-clear.
 
 ## Install and first run
 
-Not published to npm yet, and every command below is one that was run — the same rule Chase's README
-states out loud, because an unverified install line is a lie waiting to ship.
+Not published to npm yet — `npm whoami` returns E401 from the build environment, so
+`npm install -g @zeroxcyril/dot` would be an unverified line and is therefore not
+printed anywhere in this file. See `docs/blocked.md`. Every command below is one that
+was actually run, which is the same rule Chase's README states out loud.
+
+From a clone:
 
 ```bash
 npm ci
-npm run build                                  # tsc + chmod +x on the bin
+npm run build                                  # tsc, then postbuild chmods the bin
 node dist/cli/index.js analyze <PROGRAM_ID>
 node dist/cli/index.js limits                  # what Dot cannot see, as data
 ```
 
-`npm link` needs a writable global prefix. On the box this was built on it is not: the prefix resolves to
-`/usr/local/lib/node_modules`, which does not exist, so `npm link` fails with EACCES rather than
-installing something half-broken. Either point npm somewhere you own and re-open your shell —
+As a global install from the built tarball — verified end to end by
+`test/install.test.ts`, which packs, installs with `npm install -g` into a throwaway
+prefix, and executes all six bins:
+
+```bash
+npm pack                                                    # -> zeroxcyril-dot-0.1.0.tgz
+npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-0.1.0.tgz
+/tmp/dot-prefix/bin/dot-limits
+```
+
+Or with a prefix you control on PATH:
 
 ```bash
 npm config set prefix ~/.npm-global
@@ -68,14 +80,17 @@ export PATH=~/.npm-global/bin:$PATH
 npm link && dot analyze <PROGRAM_ID>
 ```
 
-— or skip the link and use the built entry point directly.
+`npm link` needs a writable global prefix. On the build box it is not: the prefix
+resolves to a `/usr/local/lib/node_modules` that does not exist, so `npm link` fails
+with EACCES rather than half-installing.
 
 **The `dot` bin name collides with graphviz, and this is not hypothetical.** `/usr/bin/dot` was present
 here, shadowed the linked binary, and `dot limits` printed graphviz's `can't open limits`. The package
 therefore also installs unambiguous aliases that dispatch on the invoked name:
 
 ```bash
-dot-analyze <program>       dot-watch --targets targets.json       dot-mcp
+dot-analyze <program>   dot-watch --targets targets.json   dot-mcp
+(dot | dot-analyze | dot-watch | dot-mcp | dot-limits | dot-calibrate)
 dot-limits                  dot-calibrate --rpc <url>
 ```
 
