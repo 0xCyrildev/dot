@@ -1,6 +1,6 @@
 {
   "name": "@zeroxcyril/dot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Agentic Solana blast-radius analyzer: watches BPFLoaderUpgradeable upgrades and rebuilds the on-chain CPI supply chain from execution traces.",
   "type": "module",
   "engines": {
@@ -35,7 +35,8 @@
     "dot": "node --import tsx src/cli/index.ts",
     "mcp": "node --import tsx src/mcp/server.ts",
     "postbuild": "chmod +x dist/cli/index.js",
-    "verify-install": "bash scripts/verify-install.sh"
+    "verify-install": "bash scripts/verify-install.sh",
+    "prepublishOnly": "bash scripts/verify-install.sh"
   },
   "keywords": [
     "solana",

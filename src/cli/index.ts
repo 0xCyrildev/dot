@@ -10,6 +10,7 @@ import { Scout, type PriorDigest } from '../agent/scout.js';
 import { HttpTransport } from '../rpc/transport.js';
 import { SolanaClient } from '../rpc/client.js';
 import { UpgradeWatcher, type WatchTarget, type UpgradeEvent } from '../watcher/watcher.js';
+import { PKG_VERSION } from '../version.js';
 import { UpgradeDispatcher } from '../watcher/dispatcher.js';
 import { ProgramIndex } from '../state/programIndex.js';
 import { decodeProgramData, type ProgramDataState } from '../state/programdata.js';
@@ -183,7 +184,7 @@ async function build(o: GlobalOpts & BuildExtras) {
 program
   .name('dot')
   .description('Agentic Solana blast-radius analyzer for BPFLoaderUpgradeable upgrades.')
-  .version('1.0.0');
+  .version(PKG_VERSION);
 
 program
   .command('analyze')

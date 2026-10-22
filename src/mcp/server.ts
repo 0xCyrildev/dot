@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { PKG_VERSION } from '../version.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -147,7 +148,7 @@ function errorResult(message: string, extra: Record<string, unknown> = {}) {
  */
 export function buildServer(opts: McpOptions): McpServer {
   const mode: 'rules' | 'real' = opts.mode === 'real' ? 'real' : 'rules';
-  const server = new McpServer({ name: 'dot', version: '1.0.0' }, { capabilities: { tools: {} } });
+  const server = new McpServer({ name: 'dot', version: PKG_VERSION }, { capabilities: { tools: {} } });
 
   server.registerTool(
     'dot_blast_radius',
