@@ -10,6 +10,7 @@ import { resolveAccountKeys } from '../graph/keys.js';
 import type { SolanaClient } from '../rpc/client.js';
 import type { WireSignatureInfo } from '../rpc/wire.js';
 import { diffBytecode, renderBytecodeDiff, type BytecodeDiff } from '../state/bytecodeDiff.js';
+import { scoreDanger, type DangerInputs } from '../score/danger.js';
 import type { BlockBatcher, IngestSummary } from '../graph/batcher.js';
 import { classifyAuthority, deriveProgramData, decodeProgramData } from '../state/programdata.js';
 import { BudgetExhaustedError, DotError, describeError, isDotError } from '../errors.js';
@@ -124,6 +125,10 @@ export type ScoutOptions = {
    */
   verify?: (args: { program: string; programData: string; signatures: string[] }) => Promise<import('../rpc/verifier.js').ChainVerification>;
   knownMultisigs?: string[];
+  /** Operator-declared SOL price (`--sol-usd`). Dot has no oracle; without it nothing prints USD. */
+  usdPerSol?: number | null;
+  /** True when `--state` is in use, which is what makes "no prior digest" mean anything. */
+  stateFileUsed?: boolean;
   /** Max transitive depth reported; deep graphs are mostly re-exports of the same DEX. */
   maxDepth?: number;
 };
@@ -841,6 +846,45 @@ export class Scout {
       idlAvailable: ctx?.idl.available ?? false,
       logTruncated: built?.evidence.logTruncated ?? false,
     });
+    // The danger ranking is assembled from what this run already has, and only from that: a
+    // null here means the axis was never measured, and scoreDanger keeps it null instead of
+    // letting an absent graph score 0 blast-radius points and a clean-looking total.
+    const diff = this.bytecodeDiff;
+    const dangerInputs: DangerInputs = {
+      program,
+      authority: { posture: ctx?.authority.posture ?? 'unknown', address: ctx?.authority.after ?? null },
+      delta: diff
+        ? {
+            confidence: diff.confidence,
+            addedEntrypoints: diff.instructions?.added.map((a) => a.name) ?? [],
+            undeclaredEntrypoints: diff.instructions?.undeclaredEntrypoints.map((u) => u.name) ?? [],
+            accountChanges: (diff.accounts ?? [])
+              .filter((a) => a.status === 'added' || a.status === 'accounts_changed')
+              .map((a) => ({
+                instruction: a.instruction,
+                addedSigner: a.added.filter((x) => x.signer).map((x) => x.name),
+                addedWritable: a.writableNonSigner,
+              })),
+          }
+        : null,
+      radius: built
+        ? {
+            direct: built.exposure.directCallers,
+            transitive: built.exposure.transitiveCallers,
+            // A per-transaction attribution sum, not a TVL figure — see VALUE_IS_PROXY. The danger
+            // axis inherits that caveat verbatim rather than laundering it into a headline number.
+            lamportsRouted: built.exposure.lamportsRouted,
+            usdPerSol: this.o.usdPerSol ?? null,
+            mintsTouched: built.exposure.mintsTouched,
+          }
+        : null,
+      behavior:
+        ctx && ctx.history.lastAnalysisAt !== null
+          ? { priorDigestAt: new Date(ctx.history.lastAnalysisAt).toISOString(), stateFileUsed: this.o.stateFileUsed ?? true }
+          : { priorDigestAt: null, stateFileUsed: this.o.stateFileUsed ?? false },
+    };
+    const danger = scoreDanger(dangerInputs);
+
     const evidenceList: Evidence[] = this.ledger.all();
     return {
       schema: 'dot.report.v1',
@@ -856,6 +900,7 @@ export class Scout {
       confidence: built?.risk.confidence ?? 'low',
       components: built?.risk.components ?? [],
       cappedBy: built?.risk.cappedBy ?? stopNote,
+      danger,
       stoppedAt,
       stopNote,
       stages: this.trace,

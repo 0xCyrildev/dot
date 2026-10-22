@@ -72,6 +72,7 @@ only ever seen successful scans will report an empty range as a clean one.** The
 | **Range empty.** `tracesAnalyzed: 0` with `pruned > 0` or `rpcErrorCodes` populated | The window exists but the node would not serve it. `-32015` means *this node has no history*, not *nothing happened*. | `report.rpc`, `cappedBy` |
 | **Target not matched.** traces parsed, but zero attributed edges | This program was not called inside the sample. Meaningful only when `sampleCoverage` is high. | `blastRadius.attributionQuality`, `sampleCoverage` |
 | **Target reached, clean.** full coverage, real sample, edges present and unremarkable | The only "nothing to see" that is evidence. | `confidence: "high"` **and** `cappedBy: null` |
+| **Axis not assessed.** `danger.axes[].points === null` | One of the four danger-ranking inputs never existed for this run — no diff, no graph, no state file. It is excluded from the total, not scored as zero, and CRITICAL is withheld while it is missing. | `danger.unassessedAxes`, `danger.coverage`, `danger.ceiling` |
 
 Read in this order, every time: `stoppedAt` → `cappedBy` → `sampleCoverage` → `confidence` → then the
 tier. A tier with `cappedBy` non-null is a tier limited by a blind spot; `NO_MALICE_DETECTION` and
@@ -86,6 +87,21 @@ point it touched — a retrievable newest signature says nothing about where the
 **`confidence` is not severity.** A low-confidence P1 is a different job from a high-confidence P1.
 `tierSource: "integrity"` means the *tool's inputs* contradicted each other (two endpoints, same slot,
 different bytes) and the run halted — that is not a statement about the program at all.
+
+**The tier is not the ranking, and the ranking is not a verdict.** Every report carries both numbers:
+`tier`/`score` from `scoreRisk()` is *exposure* — how much blast radius Dot was permitted to see — while
+`danger` from `src/score/danger.ts` is a *queue position* for this one upgrade, 0–100 over authority
+posture (40), code delta (30), blast radius (30) and behavioural anomaly (20). They disagree routinely
+and that is the point: a dull-looking program held by one key can be P3 by sampled exposure and CRITICAL
+by posture. Read `danger.category` to decide when to look, never whether the program is safe. Three
+inputs the model would want are not obtainable from chain data and the axis prints them in its own
+`notAssessed` line rather than approximating: a multisig's **threshold** (Dot does not decode the
+multisig account, so 1-of-2 and 5-of-9 both score 25, at the alarming end and labelled as an assumption),
+**proximity to an ecosystem event** (no feed exists, so that +10 has never been awarded), and routed
+**token value** (the graph records which mints were touched, never how much, so the ×2 multiplier is
+lamports-only). The axes sum to 120 and the score clamps to 100: keep `rawScore` in view, because
+100/100 can mean "several axes maxed out" or "the arithmetic ran out of room", and those are different
+facts about the program.
 
 ## What the agent will do that a script will not
 

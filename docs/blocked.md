@@ -19,7 +19,7 @@ npx -y -p @zeroxcyril/dot dot-limits --status | head -1
 ```
 
 All six bins reported `1.0.0` from the registry-installed package, and the `npx` form printed
-`Limit status — 4 RESOLVED, 10 NARROWED, 7 UNRESOLVABLE_IN_CODE (21 codes)`. That is the evidence
+`Limit status — 4 RESOLVED, 11 NARROWED, 7 UNRESOLVABLE_IN_CODE (22 codes)`, re-run 2026-10-22 after the bytecode recovery and the danger-ranking row landed (v1.0.0 printed 4/10/7 over 21 codes, and `docs/RELEASE-v1.0.0.md` keeps that older line as the release record). That is the evidence
 behind the install lines in `README.md` and `skill/dot/SKILL.md`, which is what `test/skill.test.ts`
 is allowed to take on faith: it cannot query the registry (the suite is offline), so it checks that
 every version quoted in those documents equals `package.json` instead, and fails if either returns to

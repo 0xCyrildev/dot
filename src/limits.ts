@@ -19,7 +19,8 @@ export type LimitCode =
   | 'PROGRAMDATA_REVERSE_LOOKUP'
   | 'FEED_BACKPRESSURE'
   | 'GRPC_LIVE_PATH_UNREACHABLE'
-  | 'BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES';
+  | 'BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES'
+  | 'DANGER_RANKING_UNMEASURED_INPUTS';
 
 export type LimitNote = {
   code: LimitCode;
@@ -220,6 +221,15 @@ export const LIMIT_NOTES: LimitNote[] = [
       'Nothing here determines whether an upgrade is malicious. A P0 says "posture and blast radius justify a human before the weekend", and a P3 says "the evidence Dot could gather does not". Absence of a finding is not a clean bill of health, and the tier is a queue position, not a verdict.',
     mitigation:
       'Read the `components` array and the evidence ledger before escalating to anyone. If `cappedBy` is non-null, the tier is capped by a blind spot and the next step is a better data source, not a louder alarm.',
+    always: true,
+  },
+  {
+    code: 'DANGER_RANKING_UNMEASURED_INPUTS',
+    title: 'Three of the danger ranking’s inputs do not exist on-chain, and it says so on every axis',
+    blind:
+      'The 0-100 ranking is arithmetic over four axes, and three of its sub-claims cannot be measured from what Dot is allowed to read. (1) The *threshold* of a multisig upgrade authority lives inside the multisig account, which Dot does not decode, so 1-of-2 and 5-of-9 are the same posture: scored at 25 — the alarming end of the two bands the model defines — never at a guessed midpoint. (2) "Upgrade within 24h of a major ecosystem event" has no feed in Dot at all, so that award is never given and no score this build produces has ever included it. (3) Value routed through *tokens* is not attributable: the graph records which mints a call touched, not how much, so the ×2 blast-radius multiplier applies to observed lamports only and a mint-heavy program can score below its real exposure. A fourth, softer one: "first upgrade" means first upgrade **Dot observed in its own `--state` file**, not first upgrade in the program’s life.',
+    mitigation:
+      'Each has a real fix, none of them a heuristic. Decode the multisig account (shamir/threshold fields are plain borsh, ~30 lines, and would let 1-of-N and M-of-N take their own bands). Feed the ranking an incident list an operator declares (`--event-window`) rather than inventing one. Get instruction-level token deltas from an indexer or an instrumented node — the same fix HISTORY_RETENTION asks for. Run Dot continuously so the state file predates the upgrade. Until then the axis prints the gap in its own `notAssessed` line, an unmeasured axis is `null` rather than 0, and CRITICAL is withheld whenever any axis was unmeasured: the ceiling is the mechanism that stops a hole in the data reading as a low score.',
     always: true,
   },
 ];

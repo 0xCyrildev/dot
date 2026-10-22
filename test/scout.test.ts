@@ -37,7 +37,7 @@ function stack(routes: Parameters<typeof FakeTransport.prototype.route>[0][]) {
 function makeScout(
   transport: FakeTransport,
   budget: Budget,
-  opts: Partial<{ prior: Map<string, { at: number; knownDependents: number; lamportsRouted: number; tier: string }>; multisigs: string[] }> = {},
+  opts: Partial<{ prior: Map<string, { at: number; knownDependents: number; lamportsRouted: number; tier: string }>; multisigs: string[]; usdPerSol: number; stateFileUsed: boolean }> = {},
 ) {
   const client = new SolanaClient({ transport, budget, commitment: 'finalized' });
   return new Scout({
@@ -47,6 +47,8 @@ function makeScout(
     mode: 'rules',
     ...(opts.multisigs ? { knownMultisigs: opts.multisigs } : {}),
     ...(opts.prior ? { prior: opts.prior } : {}),
+    ...(opts.usdPerSol !== undefined ? { usdPerSol: opts.usdPerSol } : {}),
+    ...(opts.stateFileUsed !== undefined ? { stateFileUsed: opts.stateFileUsed } : {}),
   });
 }
 
@@ -351,5 +353,57 @@ describe('escalation is phrased as an ask, not a finding', () => {
     wide.route(txRoute(txFixture('tx-depth3')));
     const ok = await makeScout(wide, new Budget({ maxRpcCalls: 200, maxSignatures: 200 })).run({ program: TARGET });
     expect(formatEscalation(ok)).toBeNull();
+  });
+});
+
+describe('Scout: the Upgrade Danger Ranking rides the same report', () => {
+  const axisOf = (d: NonNullable<Awaited<ReturnType<Scout['run']>>['danger']>, id: string) => d.axes.find((a) => a.id === id)!;
+
+  it('scores the authority it read from ProgramData and refuses to guess the rest', async () => {
+    // No --state, no --multisig: the authority is a plain key, so posture is the full 40 — and
+    // the behavioural axis must come back null rather than "first upgrade", because without a
+    // state file "no prior digest" is not evidence of anything.
+    const { transport, budget } = stack([accountRoute(AUTH), sigsRoute(2), txRoute(txFixture('tx-depth3'))]);
+    const report = await makeScout(transport, budget).run({ program: TARGET });
+    const d = report.danger!;
+    expect(axisOf(d, 'authority').points).toBe(40);
+    expect(axisOf(d, 'authority').label).toMatch(/Single-key EOA/);
+    expect(d.unassessedAxes).toContain('behavior');
+    expect(d.category).not.toBe('CRITICAL');
+    // No withholding note on this run: the score was nowhere near CRITICAL, so the ceiling rule
+    // had nothing to clamp. test/danger.test.ts pins the clamp itself.
+    expect(d.ceiling).toBeNull();
+    const md = renderMarkdown(report);
+    expect(md).toContain('## Upgrade danger ranking');
+    expect(md).toContain('UPGRADE DANGER RANKING:');
+    expect(md).toContain('└── Behavior:');
+  });
+
+  it('reads a declared multisig authority as 25 with the threshold gap stated', async () => {
+    const { transport, budget } = stack([accountRoute(AUTH), sigsRoute(2), txRoute(txFixture('tx-depth3'))]);
+    const report = await makeScout(transport, budget, { multisigs: [AUTH] }).run({ program: TARGET });
+    const a = axisOf(report.danger!, 'authority');
+    expect(a.points).toBe(25);
+    expect(a.detail.join(' ')).toMatch(/threshold not readable/i);
+  });
+
+  it('does not call a repeat upgrade a first sighting when --state remembers it', async () => {
+    const { transport, budget } = stack([accountRoute(AUTH), sigsRoute(50), txRoute(txFixture('tx-depth3'))]);
+    const prior = new Map([[TARGET, { at: Date.now() - 86_400_000, knownDependents: 0, lamportsRouted: 0, tier: 'P3' }]]);
+    const report = await makeScout(transport, budget, { prior, multisigs: [AUTH] }).run({ program: TARGET });
+    const a = axisOf(report.danger!, 'behavior');
+    expect(a.points).toBe(0);
+    expect(a.label).toMatch(/previously observed/);
+  });
+
+  it('keeps the operator-declared price out of a sample that routed nothing', async () => {
+    // The fixture graph attributes zero lamports, so even with --sol-usd supplied the ranking
+    // must print no dollar figure. The USD path itself is pinned in test/danger.test.ts, where
+    // the value is not zero; this is the integration case where the artifact would appear.
+    const { transport, budget } = stack([accountRoute(AUTH), sigsRoute(2), txRoute(txFixture('tx-depth3'))]);
+    const report = await makeScout(transport, budget, { usdPerSol: 150 }).run({ program: TARGET });
+    const label = axisOf(report.danger!, 'blastRadius').label;
+    expect(label).toMatch(/routing 0 lamports/);
+    expect(label).not.toMatch(/\$/);
   });
 });

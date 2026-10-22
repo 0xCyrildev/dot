@@ -179,6 +179,16 @@ export const LIMIT_STATUS: LimitStatus[] = [
     fix: 'npx vitest run test/bytecode.test.ts (uses test/fixtures/sbf-dispatch.so), or DOT_TEST_SO=program.so DOT_TEST_IDL=idl.json npx vitest run test/bytecode.test.ts for any real artifact. Wider coverage is a sampling job: run the gated check against published mainnet programs and report the fraction located.',
   },
   {
+    code: 'DANGER_RANKING_UNMEASURED_INPUTS',
+    state: 'NARROWED',
+    change:
+      'The ranking reports its own gaps in the number rather than around it. An axis with no data is `null`, not 0, so a run that never built a graph does not collect 0 blast-radius points and a clean-looking total; `coverage` prints how many of the 120 possible axis points were measurable; `rawScore` is kept next to the 100 clamp because the axes sum to 120 and a reader is entitled to know that several were maxed out; and CRITICAL is withheld outright when any axis was unmeasured (`test/danger.test.ts` pins the clamp and the withholding). The three unanswerable sub-claims — multisig threshold, ecosystem-event proximity, routed token value — are each declared inside the axis that could not use them.',
+    remains:
+      'A 1-of-2 multisig and a 5-of-9 multisig score identically, because Dot does not decode the multisig account. Token-heavy programs are ranked on lamports alone: the graph knows which mints were touched and not how much. "First upgrade observed" is bounded by how long `--state` has been running, which for a program Dot was pointed at yesterday is not a statement about its history at all. And the score is a queue position derived from posture and volume — it is not a vulnerability claim, and a LOW is a statement about the evidence Dot was allowed to gather.',
+    tests: ['test/danger.test.ts', 'test/scout.test.ts'],
+    fix: 'Decode the authority account for its threshold, accept an operator-declared incident window instead of inventing one, and route token deltas from an indexer. docs/limits.md (dot limits) carries the row; the module header in src/score/danger.ts carries the reasoning.',
+  },
+  {
     code: 'PROGRAMDATA_REVERSE_LOOKUP',
     state: 'NARROWED',
     change:

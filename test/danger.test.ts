@@ -122,8 +122,11 @@ describe('upgrade danger ranking — axes', () => {
 
   it('prints a dollar figure only when the operator supplied a price', () => {
     const r = { direct: 3, transitive: 3, lamportsRouted: 266_666_666_666, usdPerSol: 150, mintsTouched: 0 };
-    expect(axis(scoreDanger(flat({ radius: r })), 'blastRadius').label).toMatch(/\(~\$40,000\)$/);
+    expect(axis(scoreDanger(flat({ radius: r })), 'blastRadius').label).toMatch(/\(~\$40,000\) in the sample/);
     expect(axis(scoreDanger(flat({ radius: { ...r, usdPerSol: null } })), 'blastRadius').label).not.toMatch(/\$/);
+    // An observed zero with a price supplied prints no dollar figure: "~$0 of routing" is a
+    // formatting artifact, and it was in the live output until this line existed.
+    expect(axis(scoreDanger(flat({ radius: { ...r, lamportsRouted: 0 } })), 'blastRadius').label).toMatch(/routing 0 lamports in the sample/);
   });
 
   it('calls a first observed upgrade 20 points and names the limit of that claim', () => {
@@ -199,7 +202,7 @@ describe('upgrade danger ranking — totals, ceilings and output', () => {
     expect(out).toMatch(/^UPGRADE DANGER RANKING: CRITICAL \(Score: 95\/100\)$/m);
     expect(out).toMatch(/├── Authority: Single-key EOA \(4e7a\S+\) \[\+40\/40\]/);
     expect(out).toMatch(/├── Code Delta: added entrypoint `emergency_withdraw` \[\+15\/30\]/);
-    expect(out).toMatch(/├── Blast Radius: 1 direct, 34 transitive, routing 0 lamports \[\+20\/30\]/);
+    expect(out).toMatch(/├── Blast Radius: 1 direct, 34 transitive, routing 0 lamports in the sample \(a per-transaction proxy, not a TVL figure\) \[\+20\/30\]/);
     expect(out).toMatch(/└── Behavior: first upgrade Dot has observed for this program \[\+20\/20\]/);
     expect(out).toMatch(/^VERDICT: /m);
     expect(out.match(/[├└]── /g)?.length).toBe(4);

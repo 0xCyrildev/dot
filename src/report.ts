@@ -1,6 +1,7 @@
 import type { BudgetSnapshot } from './agent/budget.js';
 import type { Evidence } from './agent/evidence.js';
 import type { Graph } from './graph/builder.js';
+import { renderDanger, type DangerAssessment } from './score/danger.js';
 import type { RiskComponent, RiskTier } from './score/risk.js';
 import type { LimitNote } from './limits.js';
 import type { ClientStats } from './rpc/client.js';
@@ -97,6 +98,12 @@ export type DotReport = {
   chainVerified?: import('./rpc/verifier.js').ChainVerification;
   /** Structural bytecode diff (Anchor entrypoints) when a prior image was obtainable. */
   bytecodeDiff?: import('./state/bytecodeDiff.js').BytecodeDiff;
+  /**
+   * The 0-100 Upgrade Danger Ranking, and the four axes it was built from. Separate from
+   * `tier`/`score`, which measure exposure: this measures how soon a human should open this
+   * specific upgrade. An axis with no data is null in here, never 0.
+   */
+  danger?: DangerAssessment;
   bytecodeProvenance?: string | null;
   bytecodeDiffMarkdown?: string;
   /** Custody from operator-declared seeds, when --seeds was supplied. Absent means unobserved, not zero. */
@@ -176,6 +183,16 @@ export function renderMarkdown(r: DotReport): string {
   }
   if (r.cappedBy) L.push('');
   if (r.cappedBy) L.push(`> Tier capped by a blind spot: ${r.cappedBy}`);
+  if (r.danger) {
+    // Separate section, separate number, deliberately fenced: the tree is the operator's queue
+    // line and it must survive a markdown renderer un-altered. It is NOT the tier above it —
+    // `score` and the risk components are exposure; this is "how soon to open this upgrade".
+    L.push('');
+    L.push('## Upgrade danger ranking');
+    L.push('```');
+    L.push(renderDanger(r.danger));
+    L.push('```');
+  }
   L.push('');
   L.push(`ProgramData \`${r.programData}\``);
   L.push('');

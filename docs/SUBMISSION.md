@@ -198,8 +198,8 @@ the specification at the reader.
 
 ## 5. What Dot does not see — in three states, not two
 
-`dot limits --status` prints 21 codes: **4 RESOLVED** (each names test files, and `verifyTestClaims()`
-exits 5 if a named test is missing or contains no `it()`), **10 NARROWED**, **7 UNRESOLVABLE_IN_CODE**.
+`dot limits --status` prints 22 codes: **4 RESOLVED** (each names test files, and `verifyTestClaims()`
+exits 5 if a named test is missing or contains no `it()`), **11 NARROWED**, **7 UNRESOLVABLE_IN_CODE**.
 The third category exists because a two-state table forces a bad choice between claiming a fix and filing
 a property of the chain under "not done".
 
@@ -266,6 +266,15 @@ Four tools — `dot_blast_radius`, `dot_evaluate_upgrade`, `dot_limits`, `dot_wa
 a `budget` argument so an orchestrator cannot ask for an unbounded scan by accident. `test/mcp.test.ts`
 spawns the process over real stdio pipes and asserts every stdout line is parseable JSON-RPC, because one
 stray `console.log` corrupts the stream and the host drops the connection with no useful error.
+
+Every tool result carries the danger ranking in `structuredContent.danger` — score, raw score,
+category, the withheld-ceiling note, the coverage pair and the four axes with their `notAssessed`
+lines — and `test/mcp.test.ts` pins that the key is present as `null` when there is no ranking,
+because an omitted key and a null one read differently to a consumer and only one of them is honest.
+One consequence of wiring it this way is worth stating rather than hiding: the MCP path has no
+`--state` file, so its behavioural axis is always unmeasured, so **`dot_evaluate_upgrade` can never
+return CRITICAL.** That is the ceiling rule doing its job — a tool that cannot tell whether this is a
+program's first upgrade should not be the one that says it is the most urgent thing on the queue.
 
 ```json
 { "jsonrpc": "2.0", "id": 4, "method": "tools/call",
@@ -402,12 +411,40 @@ test itself assembled. This session compiled real SBF images with the Solana too
 them: a 3,760-byte program whose dispatch has the shape `#[program]` generates yields **0 of 10**
 contiguous selectors (each present as a `mov32 imm32` + `hor64 imm32` pair eight bytes apart), and a
 244 KB program built against anchor-lang 0.30.1 yields **0 of 6** contiguous and **0 of 6** halves,
-its `match` lowering into a byte-wise compare tree. So the entrypoint diff is honest about which
-claim it can make: `confidence: "unscannable"` when nothing is located against a declared
-interface, `idlClaimedNotFound` reworded from "not there" to "not seen", and a carried hypothesis
-that cannot be *confirmed* by a scan that saw nothing. The scanner itself is still blind — that is
-the open defect in `docs/blocked.md` §4, and the fix is to match what LLVM emits or to stop
-scanning bytecode, not to relax the test that found it.
+its `match` lowering into a byte-wise compare tree. The finding was pinned as an assertion before it
+was fixed, so the fix could not be quietly swapped in: `confidence: "unscannable"` when nothing is
+located against a declared interface, `idlClaimedNotFound` reworded from "not there" to "not seen",
+and a carried hypothesis that cannot be *confirmed* by a scan that saw nothing.
+
+Then the blindness turned out to be Dot's, not the bytecode's. `src/state/sbfSelectors.ts` reads the
+ELF64 section table, walks `.text` as eBPF and recovers all three emission shapes: **10 of 10** on the
+hand-built-shape image (every selector as an immediate pair) and **6 of 6** on the anchor-lang program
+(every arm a compare chain, the leading byte consumed by the outer switch ~87 instructions earlier).
+Both images are committed, so the claim needs no toolchain to check. It is self-checking by
+construction — a candidate is reported only when it equals a hash the IDL supplied — and the two
+negative controls are in the suite: **0 of 30** names that neither program implements, and the six
+real names still exactly six when padded with those thirty. A misdecode therefore costs a miss and
+cannot produce a false claim. `unscannable` stays, now reserved for the case it actually describes:
+an image that does not parse, or one lowered into a shape the recovery has not been shown on —
+which is why `BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES` is NARROWED rather than RESOLVED, the residual
+being a claim about coverage (two images, not a corpus).
+
+**The danger ranking reports its own holes in the number, and three of the brief's inputs do not
+exist.** `src/score/danger.ts` answers "how soon should a human open this upgrade" with a 0–100
+score over four axes, deliberately separate from the P0–P3 tier: a program with a dull history and
+200 dependents can be P1 by exposure and CRITICAL by posture, and the two numbers disagreeing is
+information, not a defect. Three sub-claims in the specification cannot be measured from anything Dot
+is allowed to read, and each is reported inside the axis that wanted it rather than approximated: the
+*threshold* of a multisig authority lives in an account Dot does not decode, so 1-of-2 and 5-of-9 score
+identically (at the alarming end, 25, and printed as an assumption); "within 24h of a major ecosystem
+event" has no feed at all, so that award has never been given by any score this build produced; and
+routed *token* value is not attributable — the graph records which mints a call touched, never how much
+— so the ×2 multiplier is lamports-only. Two more choices are arithmetic made visible instead of
+absorbed: the four axes sum to 120, so `rawScore` is kept beside the clamped `score`; and an axis with
+no data is `null`, never 0, so a run that never built a graph does not collect "0 blast radius" and a
+tidy-looking total — `coverage` prints how many of the 120 points were measurable and CRITICAL is
+withheld outright when any axis was unmeasured. `DANGER_RANKING_UNMEASURED_INPUTS` carries the row in
+`dot limits --status`.
 
 ---
 

@@ -67,6 +67,8 @@ type GlobalOpts = {
   costModel?: string;
   depth: string;
   solUsd?: string;
+  /** `--state`: the file Dot's own memory of past upgrades lives in. */
+  state?: string;
   mode: string;
   budgetRpc: string;
   budgetTokens: string;
@@ -98,7 +100,7 @@ function parseBudget(o: GlobalOpts): Budget {
 }
 
 type BuildExtras = Partial<
-  Pick<import('../agent/scout.js').ScoutOptions, 'bytecode' | 'recordBytecode' | 'carryHypothesis'> & { verify: boolean; verifySample: string }
+  Pick<import('../agent/scout.js').ScoutOptions, 'bytecode' | 'recordBytecode' | 'carryHypothesis' | 'prior'> & { verify: boolean; verifySample: string }
 >;
 
 async function readIdlPair(now?: string, prior?: string): Promise<{ now: unknown | null; prior: unknown | null }> {
@@ -115,7 +117,6 @@ async function readIdlPair(now?: string, prior?: string): Promise<{ now: unknown
 }
 
 async function build(o: GlobalOpts & BuildExtras) {
-  void o.solUsd;
   const rpc = o.rpc ?? process.env.DOT_RPC_URL ?? DEFAULT_RPC;
   if (rpc === DEFAULT_RPC) {
     process.stderr.write(
@@ -164,6 +165,9 @@ async function build(o: GlobalOpts & BuildExtras) {
     decision,
     mode,
     knownMultisigs: o.multisig,
+    usdPerSol: o.solUsd ? Number(o.solUsd) : null,
+    ...(o.prior ? { prior: o.prior } : {}),
+    stateFileUsed: Boolean(o.state),
     maxDepth: Number(o.depth),
     ...(o.bytecode ? { bytecode: o.bytecode } : {}),
     ...(o.recordBytecode ? { recordBytecode: o.recordBytecode } : {}),
@@ -207,6 +211,7 @@ program
   .option('--prior-bytecode <file>', 'explicit prior image, when the vault has none')
   .option('--hypothesis-file <file>', 'a hypothesis JSON from an earlier under-budgeted run; it gets re-tested this time')
   .option('--hypothesis-out <file>', 'write the escalation hypothesis here for a later run to test')
+  .option('--state <file>', "read and write Dot’s digest of this program here, so a repeated run knows it is not the first upgrade it has seen")
   .option('--verify', 'cross-check the accounts and sampled transactions against every configured endpoint; costs ~4 + 2x(3+sample) calls')
   .option('--verify-sample <n>', 'how many of the sampled signatures to cross-check', '3')
   .option('--label <label>', 'human name for reports')
@@ -238,7 +243,19 @@ program
         process.stderr.write(`note: the carried claim already carries a verdict (${carry.outcome.status} at ${carry.outcome.at}); this run re-tests it and the newer verdict replaces it.\n`);
       }
     }
-    const { client, scout, budget } = await build({ ...opts, ...(carry ? { carryHypothesis: carry } : {}) });
+    // The same digest file `watch` maintains. analyze reads it before the run so the behavioural
+    // axis of the danger ranking has something to be true about, and writes it after so the next
+    // run's answer is "seen before" rather than "first one I remember".
+    const prior = new Map<string, PriorDigest>();
+    if (opts.state) {
+      try {
+        const loaded = JSON.parse(await readFile(opts.state, 'utf8')) as Record<string, PriorDigest>;
+        for (const [k, v] of Object.entries(loaded)) prior.set(k, v);
+      } catch {
+        process.stderr.write('note: state file unreadable or absent; the behavioural axis will report no prior digest, which is an absence of memory, not of upgrades\n');
+      }
+    }
+    const { client, scout, budget } = await build({ ...opts, ...(carry ? { carryHypothesis: carry } : {}), ...(prior.size ? { prior } : {}) });
     let report: DotReport;
     try {
       report = await scout.run({
@@ -254,6 +271,15 @@ program
         return;
       }
       throw e;
+    }
+    if (opts.state) {
+      prior.set(programId, {
+        at: Date.now(),
+        knownDependents: report.blastRadius?.directCallers ?? 0,
+        lamportsRouted: report.blastRadius?.lamportsRouted ?? 0,
+        tier: report.tier,
+      });
+      await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
     }
     if (opts.seeds) {
       const specs = await loadSeedFile(opts.seeds);
@@ -307,6 +333,7 @@ program
   .option('--format <fmt>', 'json | md | both', 'both')
   .option('--out <dir>', 'write report files into this directory')
   .option('--state <file>', 'persist prior digests here so repeated runs get real Decide inputs')
+  .option('--sol-usd <price>', 'operator-supplied SOL price for the danger ranking; Dot has no oracle and will not invent a USD figure')
   .option('--status-file <file>', 'write the daemon cursor/status so `dot_watch_status` can read it')
   .option('--yellowstone <url>', 'chain-wide feed from a Yellowstone/Geyser endpoint instead of polling the target list')
   .option('--yellowstone-token <token>', 'auth token for the gRPC endpoint (or DOT_YELLOWSTONE_TOKEN); never echoed')
@@ -378,6 +405,8 @@ program
           idlResolver: (p) => resolveIdl(p, { idl: opts.idl, priorIdl: opts.priorIdl, tryOnchain: opts.tryOnchainIdl }, analysisClient),
           prior,
           maxDepth: Number(opts.depth),
+          usdPerSol: opts.solUsd ? Number(opts.solUsd) : null,
+          stateFileUsed: Boolean(opts.state),
           ...(secondary
             ? {
                 resilient: {
@@ -406,7 +435,7 @@ program
         });
         if (opts.state) await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
         process.stdout.write(
-          `${rep.tier}${rep.tierSource === 'integrity' ? ' [integrity]' : ''} score=${rep.score} conf=${rep.confidence} stopped=${rep.stoppedAt} rpc=${rep.budget.spent.rpcCalls} deps=${rep.blastRadius?.directCallers ?? 'n/a'} ${rep.program}\n`,
+          `${rep.tier}${rep.tierSource === 'integrity' ? ' [integrity]' : ''} score=${rep.score} conf=${rep.confidence} danger=${rep.danger ? `${rep.danger.category}/${rep.danger.score}` : 'n/a'} stopped=${rep.stoppedAt} rpc=${rep.budget.spent.rpcCalls} deps=${rep.blastRadius?.directCallers ?? 'n/a'} ${rep.program}\n`,
         );
         await emit(rep, opts);
         return { program: event.program, tier: rep.tier, stoppedAt: rep.stoppedAt, rpcCalls: rep.budget.spent.rpcCalls };
@@ -542,6 +571,8 @@ program
         idlResolver: (p) => resolveIdl(p, { idl: opts.idl, priorIdl: opts.priorIdl, tryOnchain: opts.tryOnchainIdl }, daemonClient),
         prior,
         maxDepth: Number(opts.depth),
+        usdPerSol: opts.solUsd ? Number(opts.solUsd) : null,
+        stateFileUsed: Boolean(opts.state),
         ...(perUpgrade.limits.maxRpcCalls > 20 && opts.ingest !== 'signatures'
           ? { batcher: new BlockBatcher(perEventClient, costModel, perUpgrade), ingest: opts.ingest as 'auto' | 'blocks' | 'signatures' }
           : {}),
@@ -579,7 +610,7 @@ program
       });
       if (opts.state) await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
       process.stdout.write(
-        `${eventName} ${rep.tier} (score ${rep.score}, ${rep.confidence}) ${rep.label ?? rep.program} — stopped at ${rep.stoppedAt}, ${rep.budget.spent.rpcCalls} RPC, ${rep.blastRadius?.directCallers ?? 'n/a'} dependents\n`,
+        `${eventName} ${rep.tier} (score ${rep.score}, ${rep.confidence}) danger=${rep.danger ? `${rep.danger.category} ${rep.danger.score}/100` : 'not scored'} ${rep.label ?? rep.program} — stopped at ${rep.stoppedAt}, ${rep.budget.spent.rpcCalls} RPC, ${rep.blastRadius?.directCallers ?? 'n/a'} dependents\n`,
       );
       await emit(rep, opts);
     };

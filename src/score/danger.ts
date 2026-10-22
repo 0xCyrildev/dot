@@ -190,7 +190,7 @@ function radiusAxis(r: NonNullable<DangerInputs['radius']>): DangerAxis {
     id: 'blastRadius',
     points: Math.min(points, AXIS_MAX.blastRadius),
     max: AXIS_MAX.blastRadius,
-    label: `${r.direct} direct, ${r.transitive} transitive${r.lamportsRouted !== null ? `, routing ${formatLamports(r.lamportsRouted, r.usdPerSol)}` : ', value routing unobserved'}`,
+    label: `${r.direct} direct, ${r.transitive} transitive${r.lamportsRouted !== null ? `, routing ${formatLamports(r.lamportsRouted, r.usdPerSol)} in the sample (a per-transaction proxy, not a TVL figure)` : ', value routing unobserved'}`,
     detail,
     notAssessed,
   };
@@ -231,7 +231,8 @@ function behaviorAxis(b: NonNullable<DangerInputs['behavior']>): DangerAxis {
 function formatLamports(lamports: number, usdPerSol: number | null): string {
   const sol = lamports / 1e9;
   const solText = sol >= 1 ? `${sol.toLocaleString(undefined, { maximumFractionDigits: 2 })} SOL` : `${lamports.toLocaleString(undefined, { maximumFractionDigits: 0 })} lamports`;
-  return usdPerSol && usdPerSol > 0 ? `${solText} (~$${Math.round(sol * usdPerSol).toLocaleString()})` : solText;
+  // No USD on an observed zero: "~$0" of routing is a formatting artifact, not a measurement.
+  return usdPerSol && usdPerSol > 0 && lamports > 0 ? `${solText} (~$${Math.round(sol * usdPerSol).toLocaleString()})` : solText;
 }
 
 function verdictFor(i: DangerInputs, axes: DangerAxis[], category: DangerCategory, unassessed: DangerAxisId[]): string {
@@ -239,8 +240,8 @@ function verdictFor(i: DangerInputs, axes: DangerAxis[], category: DangerCategor
   const auth = a.get('authority')!;
   const parts: string[] = [];
   parts.push(
-    `An upgrade of \`${i.program}\` by ${auth.points === null ? 'an authority Dot could not classify' : `a ${auth.label.toLowerCase()} authority`}` +
-      ` (${auth.points === null ? 'not assessed' : `${auth.points}/${auth.max}`} posture points).`,
+    `An upgrade of \`${i.program}\` by ${auth.points === null ? 'an authority Dot could not classify' : auth.label}` +
+      ` (${auth.points === null ? 'posture not assessed' : `${auth.points}/${auth.max} posture points`}).`,
   );
   const d = a.get('codeDelta')!;
   if (d.points === null) parts.push('No bytecode diff was performed, so nothing is known about what the new code can be asked to do.');

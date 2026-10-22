@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { reportContent } from '../src/mcp/server.js';
 
 /**
  * The MCP server, over a real stdio pipe.
@@ -157,5 +158,63 @@ describe('dot mcp over stdio', () => {
 
   it('emits its ready banner on stderr, not stdout', () => {
     expect(stderrText.join('')).toMatch(/dot mcp ready/);
+  });
+});
+
+describe('MCP result carries the danger ranking', () => {
+  // `dot_evaluate_upgrade` reaches the chain, so the contract is checked at the boundary that
+  // actually defines it: reportContent(), the function that builds every tool result.
+  const minimal = (danger?: unknown) =>
+    ({
+      schema: 'dot.report.v1',
+      generatedAt: '2026-10-22T00:00:00.000Z',
+      program: 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',
+      mode: 'rules',
+      programData: 'HZcJwcJ2njPDxZtpPoKnF8v2w9QAx2rS7TdJPSRkbEhu',
+      event: 'upgrade',
+      tier: 'P2',
+      tierSource: 'exposure',
+      score: 31,
+      confidence: 'low',
+      components: [],
+      cappedBy: null,
+      stoppedAt: 'report',
+      stopNote: '',
+      stages: [],
+      decision: null,
+      blastRadius: null,
+      graph: null,
+      evidence: [],
+      limits: [],
+      budget: { limits: {}, spent: { rpcCalls: 5, signatures: 1, llmTokens: 0, wallMs: 10 }, remaining: {} },
+      rpc: { calls: 5, errors: 0, methodCounts: {}, refused: [], httpErrors: 0, jsonRpcErrors: [], slowestMs: 1 },
+      wallMs: 10,
+      ...(danger ? { danger } : {}),
+    }) as never;
+
+  it('publishes score, category, axes and the ceiling when they exist', () => {
+    const res = reportContent(
+      minimal({
+        score: 95,
+        rawScore: 105,
+        category: 'CRITICAL',
+        uncappedCategory: 'CRITICAL',
+        ceiling: null,
+        axes: [],
+        unassessedAxes: ['codeDelta'],
+        coverage: { scored: 95, possible: 95 },
+        verdict: 'x',
+      }),
+      'json',
+      {},
+    );
+    const sc = res.structuredContent as Record<string, unknown>;
+    expect(sc.danger).toMatchObject({ score: 95, rawScore: 105, category: 'CRITICAL', unassessedAxes: ['codeDelta'] });
+  });
+
+  it('publishes danger: null rather than omitting the key, so a consumer cannot read absence as zero', () => {
+    const sc = reportContent(minimal(), 'json', {}).structuredContent as Record<string, unknown>;
+    expect('danger' in sc).toBe(true);
+    expect(sc.danger).toBeNull();
   });
 });

@@ -85,13 +85,27 @@ function makeScout(opts: ToolArgs, mode: 'rules' | 'real') {
   return { scout, budget };
 }
 
-function reportContent(report: DotReport, format: 'json' | 'md', extra: Record<string, unknown>) {
+/** Exported for the test: the structuredContent shape is a contract `test/submission.test.ts` pins key by key, and the danger ranking is now part of it. */
+export function reportContent(report: DotReport, format: 'json' | 'md', extra: Record<string, unknown>) {
   return {
     content: [{ type: 'text' as const, text: format === 'md' ? renderMarkdown(report) : JSON.stringify(report, null, 2) }],
     structuredContent: {
       tier: report.tier,
       tierSource: report.tierSource,
       score: report.score,
+      /** The 0-100 Upgrade Danger Ranking, separate from tier/score (exposure). */
+      danger: report.danger
+        ? {
+            score: report.danger.score,
+            rawScore: report.danger.rawScore,
+            category: report.danger.category,
+            uncappedCategory: report.danger.uncappedCategory,
+            ceiling: report.danger.ceiling,
+            unassessedAxes: report.danger.unassessedAxes,
+            coverage: report.danger.coverage,
+            axes: report.danger.axes,
+          }
+        : null,
       confidence: report.confidence,
       stoppedAt: report.stoppedAt,
       cappedBy: report.cappedBy,
