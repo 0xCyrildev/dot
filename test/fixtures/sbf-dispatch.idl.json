@@ -1,0 +1,56 @@
+{
+  "version": "0.1.0",
+  "name": "anchorlike",
+  "instructions": [
+    {
+      "name": "initialize",
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "withdraw",
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "deposit",
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "close_account",
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "set_authority",
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "collect_fees",
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "sweep",
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "mint_to",
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "transfer_proxy",
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "refresh_state",
+      "accounts": [],
+      "args": []
+    }
+  ]
+}

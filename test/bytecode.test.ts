@@ -185,22 +185,120 @@ describe('bytecode vault', () => {
 });
 
 describe('validation against a real compiled program', () => {
-  const so = process.env.DOT_TEST_SO;
-  const idlPath = process.env.DOT_TEST_IDL;
-  const have = Boolean(so && idlPath && existsSync(so!) && existsSync(idlPath!));
-  it.skipIf(!have)(
-    have
-      ? 'locates every IDL instruction selector in genuine compiled bytecode'
-      : 'gated: no compiled .so in this environment (SBF toolchain bootstrap needs network)',
-    () => {
-    const bytes = readFileSync(so!);
-    const names = discriminatorsFromIdl(JSON.parse(readFileSync(idlPath!, 'utf8')));
-    expect(names.byName.size).toBeGreaterThan(0);
-    const scan = scanDiscriminators(bytes, names.byName);
-    // Partial recovery is expected and still informative; total failure would mean the
-    // contiguous-constant assumption is wrong and the whole module needs rethinking.
-    expect(scan.found.length / names.byName.size).toBeGreaterThan(0.5);
+  /**
+   * The assumption behind the entrypoint diff, tested against the toolchain instead of
+   * against an image this test wrote.
+   *
+   * `test/fixtures/sbf-dispatch.so` was compiled on this box with the Solana Rust toolchain
+   * (rustc 1.89.0-sbpf-solana-v1.54, platform-tools v1.54) from a program whose dispatch has
+   * the shape anchor-lang's `#[program]` macro generates: one `pub const DISCRIMINATOR:
+   * [u8; 8]` per instruction, compared against the incoming data. Ten instructions, ten real
+   * discriminators, one genuine compiler-emitted ELF.
+   *
+   * The result refutes the contiguous-constant assumption: 0 of 10 selectors are present as
+   * 8 contiguous bytes, while 10 of 10 are present as two 4-byte immediates eight bytes
+   * apart. A scan looking for the former finds nothing in a real program. Asserting the old
+   * expectation ("> half located") would have meant deleting the finding to keep the green.
+   */
+  const REAL_SO = join(__dirname, 'fixtures', 'sbf-dispatch.so');
+  const REAL_IDL = join(__dirname, 'fixtures', 'sbf-dispatch.idl.json');
+  const real = existsSync(REAL_SO) && existsSync(REAL_IDL);
+  const realBytes = () => readFileSync(REAL_SO);
+  const realIdl = () => JSON.parse(readFileSync(REAL_IDL, 'utf8'));
+
+  it('is a real SBF ELF, not a fixture shaped by hand', () => {
+    expect(real).toBe(true);
+    const b = realBytes();
+    expect([...b.subarray(0, 4)]).toEqual([0x7f, 0x45, 0x4c, 0x46]);
+    // e_machine at offset 18, little-endian. Measured: this toolchain's sbpfv2 emitter
+    // reports 0x107 (263); readelf prints it as "<unknown>: 0x107" because the id is
+    // Solana's own. What matters is that it is not x86 (62) and not a hand-made header.
+    const machine = b[18]! | (b[19]! << 8);
+    expect(machine).toBe(263);
+    expect(b.length).toBeGreaterThan(1000);
+    // Compiled output carries a .comment section no hand-built fixture would have.
+    expect(b.includes(Buffer.from('.comment')) || b.includes(Buffer.from('llvm')) || b.includes(Buffer.from('rustc'))).toBe(true);
   });
+
+  it('does not contain any discriminator as a contiguous 8-byte constant', () => {
+    const names = discriminatorsFromIdl(realIdl());
+    expect(names.byName.size).toBe(10);
+    const scan = scanDiscriminators(realBytes(), names.byName);
+    // The finding, pinned as an assertion: a contiguous scan is blind to this image.
+    expect(scan.found).toHaveLength(0);
+    expect(scan.absent.length).toBe(10);
+  });
+
+  it('but does contain every discriminator, split across an immediate pair', () => {
+    const names = discriminatorsFromIdl(realIdl());
+    const bytes = realBytes();
+    let halves = 0;
+    let pairs = 0;
+    for (const hex of names.byName.values()) {
+      const d = Buffer.from(hex, 'hex');
+      const lo = bytes.indexOf(d.subarray(0, 4));
+      const hi = bytes.indexOf(d.subarray(4, 8));
+      if (lo >= 0 && hi >= 0) halves++;
+      // mov32 imm32 then hor64 imm32: the two immediates sit 8 bytes apart in .text.
+      if (lo >= 0 && Math.abs(hi - lo) === 8) pairs++;
+    }
+    expect(halves).toBe(10);
+    expect(pairs).toBeGreaterThan(0);
+  });
+
+  it('makes the diff report unscannable rather than "nothing changed"', () => {
+    const idl = realIdl();
+    const newBytes = realBytes();
+    // Two distinct images, so the identical-digest short-circuit does not answer the question
+    // the scan is supposed to answer. The second is the first plus one byte — an ordinary
+    // rebuild moves .rodata around, and nothing here is contiguous either way.
+    const oldBytes = Buffer.concat([newBytes, Buffer.from([0x00])]);
+    const d = diffBytecode({ oldBytes, newBytes, oldIdl: idl, newIdl: idl });
+    expect(d.confidence).toBe('unscannable');
+    expect(d.instructions?.added).toHaveLength(0);
+    expect(d.instructions?.removed).toHaveLength(0);
+    expect(d.instructions?.idlClaimedNotFound.length ?? 0).toBeGreaterThan(0);
+    for (const x of d.instructions?.idlClaimedNotFound ?? []) {
+      expect(x.why).toMatch(/not seen|blind/i);
+    }
+    expect(d.limits.join(' ')).toMatch(/scan located 0 of 10/);
+    expect(renderBytecodeDiff(d, 'sbf-dispatch')).toMatch(/unscannable/);
+  });
+
+  it('still calls a byte-identical observation what it is', () => {
+    const idl = realIdl();
+    const b = realBytes();
+    const d = diffBytecode({ oldBytes: b, newBytes: b, oldIdl: idl, newIdl: idl });
+    expect(d.limits.join(' ')).toMatch(/not an upgrade/);
+  });
+
+  it('still locates contiguous selectors when a producer really does emit them', () => {
+    // Control: the scanner is not broken in general. Where the constants are contiguous, all
+    // five are found, which is what makes the blindness above a statement about emission
+    // shape rather than about the scan loop.
+    const names = ['initialize', 'withdraw', 'deposit', 'close_account', 'set_authority'];
+    const img = Buffer.concat(names.map((n, i) => Buffer.concat([Buffer.alloc(9 + i, 0x5c), anchorDiscriminator(n)])));
+    const scan = scanDiscriminators(img, discriminatorsFromIdl({ instructions: names.map((name) => ({ name })) }).byName);
+    expect(scan.found.length).toBe(5);
+  });
+
+  const extra = process.env.DOT_TEST_SO;
+  const extraIdl = process.env.DOT_TEST_IDL;
+  const have = Boolean(extra && extraIdl && existsSync(extra!) && existsSync(extraIdl!));
+  it.skipIf(!have)(
+    have ? 'runs the same check on any externally supplied artifact' : 'gated: set DOT_TEST_SO and DOT_TEST_IDL to check another program',
+    () => {
+      const bytes = readFileSync(extra!);
+      const names = discriminatorsFromIdl(JSON.parse(readFileSync(extraIdl!, 'utf8')));
+      expect(names.byName.size).toBeGreaterThan(0);
+      const scan = scanDiscriminators(bytes, names.byName);
+      // No threshold on purpose: running it on another artifact is to see what that compiler
+      // emitted, not to bend the expectation until it passes.
+      const halves = [...names.byName.values()].filter((hex) => bytes.indexOf(Buffer.from(hex, 'hex').subarray(0, 4)) >= 0).length;
+      process.stderr.write(`DOT_TEST_SO: ${scan.found.length}/${names.byName.size} contiguous, ${halves}/${names.byName.size} present as a 4-byte half\n`);
+      expect(scan.found.length).toBeLessThanOrEqual(names.byName.size);
+    },
+  );
 });
 
 describe('account-requirement diff', () => {

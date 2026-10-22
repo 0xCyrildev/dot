@@ -19,7 +19,7 @@ export type LimitCode =
   | 'PROGRAMDATA_REVERSE_LOOKUP'
   | 'FEED_BACKPRESSURE'
   | 'GRPC_LIVE_PATH_UNREACHABLE'
-  | 'BYTECODE_SCANABILITY_UNVALIDATED';
+  | 'BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES';
 
 export type LimitNote = {
   code: LimitCode;
@@ -61,12 +61,12 @@ export const LIMIT_NOTES: LimitNote[] = [
     always: false,
   },
   {
-    code: 'BYTECODE_SCANABILITY_UNVALIDATED',
-    title: 'The selector scan is proven on constructed images, not on compiled Anchor bytecode',
+    code: 'BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES',
+    title: 'The selector scan finds nothing in compiled Anchor bytecode — measured, not suspected',
     blind:
-      'The entrypoint diff rests on one assumption: that Anchor emits `sha256("global:<name>")[0..8]` as a contiguous 8-byte constant the scan can locate. That is what the framework does, and the derivation and scan logic are unit-tested, but no genuine `.so` was scanned in this build — `cargo build-sbf` cannot bootstrap its platform-tools without network egress, and no Anchor artifact exists on the box. If a compiler ever splits or merges those constants, the scan under-reports and looks like a clean diff.',
+      'The entrypoint diff rests on one assumption: that Anchor emits `sha256("global:<name>")[0..8]` as a contiguous 8-byte constant the scan can locate. The derivation rule is correct — anchor-syn 0.30.1 computes exactly `sighash("global", <snake_case method name>)` — but the *emission* assumption is now measured false. Compiled on this box with the Solana toolchain (rustc 1.89.0-sbpf-solana-v1.54, platform-tools v1.54): a 3,760-byte image in which ten discriminators are compared as `[u8; 8]` constants contains **0 of 10** contiguous selectors while all ten appear as two 4-byte immediates eight bytes apart (`mov32` + `hor64`); a 244,264-byte program built with anchor-lang 0.30.1 itself contains **0 of 6** contiguous selectors and 0 of 6 four-byte halves, the dispatch having lowered to a byte-wise compare tree. A contiguous scan is therefore blind to both shapes, which means "no entrypoint added or removed" from a real image is silence, not evidence. `diffBytecode` reports `confidence: "unscannable"` and relabels declared-but-not-located as "not seen" when it locates none of three or more declared selectors.',
     mitigation:
-      'Point the gated test at any real artifact: `DOT_TEST_SO=program.so DOT_TEST_IDL=idl.json npx vitest run test/bytecode.test.ts`. It asserts that over half of the IDL-named selectors are located; below that, the assumption is wrong and this module should be rethought rather than trusted.',
+      'To make the entrypoint diff real, scan what the compiler emits: match the `mov32 imm32` / `hor64 imm32` pair and the byte-wise compare tree, or stop scanning bytecode and read an on-chain IDL where one is published. Reproduce the measurement: `test/fixtures/sbf-dispatch.so` is the 3,760-byte image and `test/bytecode.test.ts` asserts the blindness; for the framework case, build a one-instruction-per-handler program with `cargo +1.89.0-sbpf-solana-v1.54 build --target sbpfv2-solana-solana --release` (PATH including platform-tools/llvm) against `anchor-lang = "0.30.1"` and scan it. `DOT_TEST_SO=/path/program.so DOT_TEST_IDL=/path/idl.json npx vitest run test/bytecode.test.ts` runs the same check against any artifact.',
     always: false,
   },
   {

@@ -207,7 +207,7 @@ function decide(f: Facts): ProgramLimitRow[] {
     ['PRE_DEPLOY_PARTIAL', 'not a property of this program: a Buffer has no back-link to the program it becomes'],
     ['FEED_BACKPRESSURE', 'not a property of this program: a live feed that cannot keep up drops events, and dropped is not clean'],
     ['GRPC_LIVE_PATH_UNREACHABLE', 'not a property of this program: no Geyser endpoint has ever answered this build, so live-feed detection of its upgrades is unproven in the field'],
-    ['BYTECODE_SCANABILITY_UNVALIDATED', 'not a property of this program: the discriminator scan is validated against Anchor’s derivation rule, not against a compiled .so'],
+    ['BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES', 'not a property of this program: the selector scan is blind to how rustc emits discriminators, so entrypoint claims are unproven on any compiled image'],
   ];
   for (const [code, why] of construction) rows.push(row(code, 'by_construction', why));
 

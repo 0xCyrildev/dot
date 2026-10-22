@@ -13,6 +13,7 @@ import { Budget } from '../src/agent/budget.js';
 import { RuleBasedDecision } from '../src/agent/rules.js';
 import { SolanaClient } from '../src/rpc/client.js';
 import { Scout } from '../src/agent/scout.js';
+import { retestObservation } from '../src/agent/scout.js';
 import { RealLlmDecision, type LlmConfig } from '../src/agent/llm.js';
 import { EvidenceLedger } from '../src/agent/evidence.js';
 import { renderMarkdown } from '../src/report.js';
@@ -219,6 +220,58 @@ describe('re-testing a carried hypothesis', () => {
     const o = judgeHypothesis(exposure, obs({ addedSelectorMatches: 0, observed: { entrypointSurface: false, authorityHistory: false } })).outcome!;
     expect(o.status).toBe('not_testable');
     expect(o.against).toMatch(/no selector was ever looked for/);
+  });
+
+  it('names a blind scan as the reason nothing was found, not as an unchanged interface', () => {
+    const blind = diff({
+      confidence: 'unscannable',
+      anchor: { idlAvailable: true, reason: 'IDL supplied; scan located none of its selectors' },
+      instructions: {
+        added: [],
+        removed: [],
+        persisting: [],
+        persistingNote: '',
+        undeclaredEntrypoints: [],
+        idlClaimedNotFound: [{ name: 'initialize', hex: 'a0b1c2d3e4f50607', why: 'not seen, scan may be blind' }],
+      },
+    });
+    const h = buildHypothesis({
+      ctx: ctx({ authority: { before: 'M', after: 'M', posture: 'multisig' } }),
+      wantedSignatures: 25,
+      affordableSignatures: 25,
+      bytecode: blind,
+    });
+    expect(h.evidenceAgainst.join(' ')).toMatch(/blind to this image|silence about the scan/);
+    // And a routine claim from that diff may not be "confirmed" by a re-test that also scans blind.
+    const o = judgeHypothesis(h, obs({ addedSelectorMatches: 0, observed: { entrypointSurface: false, authorityHistory: true } })).outcome!;
+    expect(o.status).toBe('not_testable');
+  });
+
+  it('derives entrypointSurface from the diff being scannable, not merely present', () => {
+    const built = { found: 12, graph: { detailedEdges: [{ to: TARGET, selectors: [{ hex: 'aabbccddeeff0011', count: 1 }] }] } } as never;
+    const instructions = {
+      added: [{ name: 'sweep', hex: 'aabbccddeeff0011', offsetsInNew: [4] }],
+      removed: [],
+      persisting: [],
+      persistingNote: '',
+      undeclaredEntrypoints: [],
+      idlClaimedNotFound: [],
+    };
+    const present = retestObservation(built, TARGET, diff({ confidence: 'structural', instructions }), [], true);
+    expect(present.observed.entrypointSurface).toBe(true);
+    expect(present.addedSelectorMatches).toBe(1);
+    const blind = retestObservation(
+      built,
+      TARGET,
+      diff({ confidence: 'unscannable', anchor: { idlAvailable: true, reason: 'scan located nothing' }, instructions }),
+      [],
+      true,
+    );
+    // Same instructions object, same selector match — only the scan's own reliability differs.
+    expect(blind.addedSelectorMatches).toBe(1);
+    expect(blind.observed.entrypointSurface).toBe(false);
+    expect(blind.signaturesPulled).toBe(12);
+    expect(blind.observed.authorityHistory).toBe(true);
   });
 
   it('lets a routine claim be denied by a selector the larger sample located', () => {

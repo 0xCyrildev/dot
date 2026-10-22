@@ -928,7 +928,7 @@ function plannedOrZero(d: { plan: { signatures: number } }): number {
  * a check that did not run, which is why `observed` is reported separately from the counts
  * — a zero from a check that never ran must not come back as `denied`.
  */
-function retestObservation(
+export function retestObservation(
   built: { found: number; graph: Graph },
   program: string,
   bytecode: BytecodeDiff | null,
@@ -945,7 +945,13 @@ function retestObservation(
     addedSelectorMatches: count((surface?.added ?? []).map((a) => a.hex)),
     removedSelectorMatches: count((surface?.removed ?? []).map((r) => r.hex)),
     coControlled: coControlled.length,
-    observed: { entrypointSurface: Boolean(surface), authorityHistory: authorityHistorySampled },
+    // `unscannable` means the scan is blind to this image's emission format, so an empty
+    // added/removed list is not an observation about the program at all. Without this the
+    // re-test would "confirm" a routine-upgrade claim from the absence of evidence.
+    observed: {
+      entrypointSurface: Boolean(surface) && bytecode?.confidence !== 'unscannable',
+      authorityHistory: authorityHistorySampled,
+    },
   };
 }
 

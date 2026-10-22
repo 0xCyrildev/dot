@@ -5,7 +5,11 @@ dist/
 .env.*
 AGENTS.md
 reports/
-state/
+# Anchored on purpose. `state/` (unanchored) also matched `src/state/`, which silently left
+# the bytecode diff, the vault, seeds, programdata and programIndex out of every commit since
+# the first one — `git add -A src` reports success while skipping an ignored path.
+/state/
+state.json
 .DS_Store
 *.tmp.mjs
 .dot-vault/

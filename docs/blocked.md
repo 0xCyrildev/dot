@@ -79,22 +79,6 @@ Still not done:
 report, including the `-32015` refusal: an honest failure is better evidence than a
 convenient success.
 
-## 4. Bytecode diff validated against real compiled Anchor bytecode — BLOCKED (no toolchain, no artifact)
-
-`cargo build-sbf` exists on this box but aborts with
-`error: not a directory: ~/.cache/solana/v1.54/platform-tools/rust/lib`, and fetching that
-platform-tools bundle needs network egress that is blocked. No Anchor `.so` or `idl.json`
-exists anywhere in the home tree either. So the entrypoint diff is validated by unit tests
-against Anchor's published derivation rule and constructed images, not against a compiled
-program. The gated test is ready:
-
-```bash
-DOT_TEST_SO=/path/to/program.so DOT_TEST_IDL=/path/to/idl.json npx vitest run test/bytecode.test.ts
-```
-
-On a networked machine, `cargo build-sbf` inside any Anchor project produces both artifacts
-in about two minutes. Until then `BYTECODE_SCANABILITY_UNVALIDATED` stays in the catalogue.
-
 ## 3. Yellowstone gRPC against a live provider — BLOCKED (no token), but the probe found a bug in Dot
 
 `GRPC_LIVE_PATH_UNREACHABLE`. Renamed from `GRPC_LIVE_PATH_MOCKED` because probing it
@@ -160,3 +144,64 @@ Read `feed.statsView()`: `updates` must rise, `startupSkipped` should be non-zer
 replay, `layoutMismatch` should stay near zero. A flat `updates` with no error is a filter
 that matches nothing — not a quiet chain. `isReplay`, keepalive and reconnect stay
 unexercised until that run happens.
+
+## 4. Bytecode diff validated against real compiled Anchor bytecode — MEASURED, AND THE ASSUMPTION FAILED
+
+This section used to read "blocked: no toolchain, no artifact, egress unavailable". Egress
+came back, the toolchain installed itself, and the check ran. It refuted the assumption.
+
+`diffBytecode` locates instruction entrypoints by scanning an image for
+`sha256("global:<name>")[0..8]`. The derivation rule is correct — `anchor-syn` 0.30.1's
+`instruction.rs` emits `sighash(SIGHASH_GLOBAL_NAMESPACE, <snake_case method name>)` as
+`const DISCRIMINATOR: [u8; 8]` — but the *emission* is not what the scan expects:
+
+| image | how built | contiguous 8-byte selectors found | 4-byte halves found |
+|---|---|---:|---:|
+| `test/fixtures/sbf-dispatch.so` (3,760 B, 10 instructions) | `cargo +1.89.0-sbpf-solana-v1.54 build --target sbpfv2-solana-solana --release`, dispatch written the way `#[program]` generates it (`pub const DISCRIMINATOR: [u8; 8]` per instruction, compared against the call data) | **0 / 10** | 10 / 10, the two halves 8 bytes apart |
+| `~/anchor-smoke/target/sbpfv2-solana-solana/release/anchor_smoke.so` (244,264 B, anchor-lang 0.30.1, 6 instructions) | same command, real framework dependency | **0 / 6** | **0 / 6** |
+
+The first image's halves are visible in the disassembly as a `mov32 imm32` followed by a
+`hor64 imm32` eight bytes later — for `withdraw`, `b7 12 46 9c` then `94 6d a1 22`, i.e.
+`b712469c946da122`, the selector Dot's own fixtures use. The framework image lowers the
+`match` on eight-byte const patterns into a byte-wise compare tree, so even the halves do not
+appear. **A contiguous scan finds nothing in either, which is the case a real deployment is
+in.** Consequence, stated plainly: Dot's entrypoint-level added/removed/undeclared claims are
+demonstrated on constructed images only; against compiled bytecode they report nothing — and
+"nothing reported" is exactly what a reader mistakes for "nothing changed".
+
+What changed in the code as a result (not a fix to the scanner — a fix to the claim):
+
+- `confidence: "unscannable"` when the scan locates none of three or more declared selectors,
+  with the reason in the limits list, instead of `"structural"` over a silent scan.
+- `idlClaimedNotFound[].why` says "not seen, scan may be blind" rather than implying absence.
+- The re-test of a carried hypothesis treats an unscannable diff as *no entrypoint view*, so a
+  routine-upgrade claim cannot be "confirmed" by the scan finding nothing (see
+  `test/hypothesis.test.ts > derives entrypointSurface from the diff being scannable, not
+  merely present`).
+
+Reproduce the measurement:
+
+```bash
+# the committed image, always run in the suite
+npx vitest run test/bytecode.test.ts
+
+# any other program
+DOT_TEST_SO=/path/program.so DOT_TEST_IDL=/path/idl.json npx vitest run test/bytecode.test.ts
+
+# rebuild the framework image (crates.io is flaky here: the first attempt timed out
+# downloading serde_json, the retry succeeded in 1m44s)
+cd /tmp && cargo new --lib anchor-smoke && # …one #[program] handler per instruction name…
+PATH=~/.cache/solana/v1.54/platform-tools/llvm/bin:$PATH \
+  cargo +1.89.0-sbpf-solana-v1.54 build --target sbpfv2-solana-solana --release
+```
+
+Note on the wrapper: `cargo build-sbf` itself fails on this box with
+`invalid toolchain name '1.89.0-sbpf-solana-v1.54\t/home/…/platform-tools/rust'` — it parses
+`rustup toolchain list -v` output including the tab-separated path. Invoking the registered
+toolchain directly (as above) works and is what produced both images.
+
+**What would close this for real:** either match what the compiler emits — the immediates pair
+and the compare tree — or stop scanning bytecode for entrypoints and read a published IDL,
+accepting that most programs publish none. Until then `BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES`
+is a named defect, not a caveat, and the bytecode-diff section of any report on a real program
+should be read as Dot not seeing.

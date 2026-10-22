@@ -114,6 +114,11 @@ export function buildHypothesis(i: HypothesisInputs): Hypothesis {
   if ((direct ?? 0) > 0) evidenceFor.push(`${direct} attributed direct caller(s) observed in this sample`);
   if ((i.coControlled?.length ?? 0) > 0) evidenceFor.push(`the same authority also appears with ${i.coControlled!.length} other program(s)`);
 
+  if (diffConfidence === 'unscannable') {
+    evidenceAgainst.push(
+      'the entrypoint scan is blind to this image: it located 0 of the declared selectors, which against compiled SBF means the discriminators are split across immediates or a compare tree — so "no entrypoint added or removed" is silence about the scan, not about the program',
+    );
+  }
   if (diffConfidence === 'bytecode_only' || diffConfidence === 'absent') {
     evidenceAgainst.push(
       'no instruction-level view: the bytecode diff is bytecode_only or absent, so nothing here distinguishes a new entrypoint from a recompiled constant',

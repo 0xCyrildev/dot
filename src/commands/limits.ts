@@ -164,14 +164,16 @@ export const LIMIT_STATUS: LimitStatus[] = [
     tests: ['test/scout.test.ts'],
   },
   {
-    code: 'BYTECODE_SCANABILITY_UNVALIDATED',
+    code: 'BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES',
     state: 'NARROWED',
     change:
-      'The discriminator derivation is asserted against Anchor\'s published rule computed independently in test, the scan is asserted on images with selectors at scattered offsets, and the diff refuses to name anything it cannot resolve from an IDL.',
+      'The assumption was tested instead of asserted, and it failed: with the Solana toolchain on this box, a compiled image holding ten `[u8; 8]` discriminators yields **0 of 10** contiguous selectors (all ten present as `mov32`+`hor64` immediate pairs), and a program built with anchor-lang 0.30.1 yields **0 of 6** contiguous and 0 of 6 four-byte halves (a byte-wise compare tree). What got smaller is the damage: `diffBytecode` now returns `confidence: "unscannable"` and relabels declared-but-not-located entries as "not seen, scan may be blind" when it locates none of three or more declared selectors, so a silent scan cannot be read as an unchanged interface.',
     remains:
-      'No genuine compiled Anchor .so has been scanned in this build, so the contiguous-constant assumption is unverified in the field. The gated test runs it on any DOT_TEST_SO/DOT_TEST_IDL pair.',
+      'The scanner is still blind. Entrypoint-level added/removed/undeclared claims are demonstrated only on constructed images; against compiled bytecode they report nothing, which is the failure mode a reviewer is most likely to misread as "no attack surface changed". Fixing it means matching the immediates pair and the compare tree, or dropping bytecode scanning for published IDLs.',
     tests: ['test/bytecode.test.ts'],
-    fix: 'Set DOT_TEST_SO and DOT_TEST_IDL and re-run the suite, or paste a real idl.json plus a deployed program image.',
+    deviation:
+      'The plan treated this item as "unvalidated, pending a toolchain". The toolchain arrived when egress returned and the validation ran; the result refuted the assumption rather than confirming it, so the limit is now a named defect with a reproduction, not a caveat.',
+    fix: 'npx vitest run test/bytecode.test.ts (uses test/fixtures/sbf-dispatch.so), or DOT_TEST_SO=program.so DOT_TEST_IDL=idl.json npx vitest run test/bytecode.test.ts for any real artifact.',
   },
   {
     code: 'PROGRAMDATA_REVERSE_LOOKUP',
