@@ -57,7 +57,11 @@ about the evidence Dot was allowed to gather, not an all-clear.
 
 ## Install and first run
 
-Published as `@zeroxcyril/dot@1.1.0`; the first release and its install evidence are recorded in
+Published as `@zeroxcyril/dot@1.0.0` — re-check with `npm view @zeroxcyril/dot version`, because the
+registry is the only source for that sentence. **The version in this checkout is 1.1.0 and is not on the
+registry yet**, so `npm install -g @zeroxcyril/dot` gives you 1.0.0, which predates the bytecode-scanner
+recovery, the danger ranking and the malice-signature axes; install from a clone below to get those. The
+first release and its install evidence are recorded in
 `docs/blocked.md` §1. The claim is checked rather than asserted: `bash scripts/verify-install.sh
 --from registry` installs this version from the registry into a throwaway prefix and **executes all
 six bins**, and `npm publish` runs that same script as `prepublishOnly` — so a package whose bins do
