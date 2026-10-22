@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
+import { findText, recoverSelectors } from './sbfSelectors.js';
 
 /**
  * Structural bytecode diff for Anchor programs, and an honest fallback for the
@@ -52,22 +53,56 @@ export function anchorDiscriminator(name: string, programScope = 'global'): Buff
 export function discriminatorsFromIdl(idl: unknown): DiscriminatorNames {
   const byName = new Map<string, string>();
   const byHex = new Map<string, string[]>();
-  const instructions = (idl as { instructions?: Array<{ name?: string }> } | null)?.instructions;
+  const instructions = (idl as { instructions?: Array<{ name?: string; discriminator?: unknown }> } | null)?.instructions;
   if (!Array.isArray(instructions)) return { byName, byHex };
   for (const ins of instructions) {
     const name = typeof ins?.name === 'string' ? ins.name : null;
     if (!name) continue;
-    const hex = anchorDiscriminator(name).toString('hex');
+    const hex = selectorFor(name, ins.discriminator);
+    if (!hex) continue;
     byName.set(name, hex);
     byHex.set(hex, [...(byHex.get(hex) ?? []), name]);
   }
   return { byName, byHex };
 }
 
+/**
+ * The 8 bytes a handler is dispatched on, named by an IDL instruction.
+ *
+ * Priority, and why each step is evidence rather than a guess:
+ * 1. the IDL's own `discriminator` array, when present — the framework emitted these bytes and
+ *    Dot does not need to reproduce them;
+ * 2. `sha256("global:" + snake_case(name))[0..8]` when the name is camelCase, because
+ *    anchor-lang-idl 0.1.4 `convert.rs` builds the IDL discriminator exactly that way
+ *    (`let name = value.name.to_snake_case(); discriminator: get_disc("global", &name)`);
+ * 3. `sha256("global:" + name)[0..8]` when the name is already snake_case — steps 2 and 3 are the
+ *    same string then, so nothing is re-cased that does not need it.
+ *
+ * A name whose camelCase form came from an acronym run Rust would not have produced (`HTTPServer`)
+ * hashes to bytes that are not in any image. Step 2 is a *candidate*: if it is wrong the selector
+ * is simply not located, which the scan reports as a blind spot, never as a different instruction.
+ */
+function selectorFor(name: string, declared: unknown): string | null {
+  if (Array.isArray(declared) && declared.length === ANCHOR_DISCRIMINATOR_LEN && declared.every((b) => Number.isInteger(b) && (b as number) >= 0 && (b as number) <= 255)) {
+    return Buffer.from(declared as number[]).toString('hex');
+  }
+  const snake = name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+  return anchorDiscriminator(snake).toString('hex');
+}
+
+export type SelectorLocation = 'contiguous' | 'immediate-pair' | 'compare-chain';
+
 export type Scan = {
   searched: number;
-  found: Array<{ hex: string; names: string[]; offsets: number[] }>;
+  found: Array<{ hex: string; names: string[]; offsets: number[]; via: SelectorLocation[] }>;
   absent: string[];
+  /** True when the image parsed as an ELF64 with a `.text` Dot could walk. False means the
+   *  recovered half of the scan never ran, which is a different nothing from "no selector found". */
+  decoded: boolean;
+  /** Names located only after decoding the instruction stream — i.e. ones the old byte sweep
+   *  would have reported as absent. Reported separately because it is the number the retired
+   *  assumption was wrong about. */
+  recoveredOnly: string[];
 };
 
 /**
@@ -77,10 +112,17 @@ export type Scan = {
  * worthless: a hit with no name is not an instruction, it is eight bytes. Random
  * collision over a ~2 MB image against a 64-bit space is ~2^-41, so a named hit is
  * effectively certain to be the constant; an unnamed one is uninterpretable either way.
+ *
+ * Two passes, in this order: the contiguous sweep (which is where a selector lives when the
+ * compiler kept the array together, and what Dot did before 2026-10-22), then SBF recovery
+ * (`sbfSelectors.ts`) for the shapes that sweep cannot see — the `mov32`/`hor64` immediate pair
+ * and the byte-wise compare chain anchor-lang emits. A name found by both is reported once, with
+ * both locations, and its contiguous offsets.
  */
 export function scanDiscriminators(bytecode: Buffer, candidates: Map<string, string>): Scan {
   const found: Scan['found'] = [];
-  const absent: string[] = [];
+  const byHex = new Map<string, Scan['found'][number]>();
+  const contiguous = new Set<string>();
   for (const [name, hex] of candidates) {
     const needle = Buffer.from(hex, 'hex');
     const offsets: number[] = [];
@@ -89,15 +131,43 @@ export function scanDiscriminators(bytecode: Buffer, candidates: Map<string, str
       offsets.push(at);
       at = bytecode.indexOf(needle, at + 1);
     }
-    if (offsets.length === 0) {
-      absent.push(name);
-      continue;
+    if (offsets.length === 0) continue;
+    contiguous.add(name);
+    const existing = byHex.get(hex);
+    if (existing) {
+      existing.names = [...new Set([...existing.names, name])];
+      existing.offsets = [...new Set([...existing.offsets, ...offsets])].slice(0, 16);
+    } else {
+      const entry = { hex, names: [name], offsets, via: ['contiguous' as const] };
+      byHex.set(hex, entry);
+      found.push(entry);
     }
-    const existing = found.find((f) => f.hex === hex);
-    if (existing) existing.names = [...new Set([...existing.names, name])];
-    else found.push({ hex, names: [name], offsets });
   }
-  return { searched: candidates.size, found, absent };
+
+  const recovered = recoverSelectors(bytecode, candidates);
+  const decoded = findText(bytecode) !== null;
+  const recoveredOnly: string[] = [];
+  for (const r of recovered) {
+    const entry = byHex.get(r.hex);
+    if (entry) {
+      if (!entry.via.includes(r.via)) entry.via = [...entry.via, r.via];
+      if (!entry.names.includes(r.name)) entry.names = [...entry.names, r.name];
+    } else {
+      const created = { hex: r.hex, names: [r.name], offsets: [r.offset], via: [r.via] };
+      byHex.set(r.hex, created);
+      found.push(created);
+    }
+    if (!contiguous.has(r.name)) recoveredOnly.push(r.name);
+  }
+
+  const located = new Set(found.flatMap((f) => f.names));
+  return {
+    searched: candidates.size,
+    found,
+    absent: [...candidates.keys()].filter((n) => !located.has(n)),
+    decoded,
+    recoveredOnly,
+  };
 }
 
 export type InstructionDiff = {

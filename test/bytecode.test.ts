@@ -223,10 +223,24 @@ describe('validation against a real compiled program', () => {
   it('does not contain any discriminator as a contiguous 8-byte constant', () => {
     const names = discriminatorsFromIdl(realIdl());
     expect(names.byName.size).toBe(10);
+    // The original finding, pinned without the scan loop so it stays true after recovery lands:
+    // no 8-byte selector appears contiguously anywhere in a compiler-emitted image.
+    const bytes = realBytes();
+    const contiguous = [...names.byName.values()].filter((hex) => bytes.indexOf(Buffer.from(hex, 'hex')) >= 0).length;
+    expect(contiguous).toBe(0);
+  });
+
+  it('locates all ten once the instruction stream is decoded', () => {
+    // This is the difference between "the bytecode has no selector" and "Dot could not read it".
+    // Measured: 10/10 on the committed fixture, all via the mov32/hor64 immediate pair, none
+    // contiguous — the exact set the old scan reported as absent.
+    const names = discriminatorsFromIdl(realIdl());
     const scan = scanDiscriminators(realBytes(), names.byName);
-    // The finding, pinned as an assertion: a contiguous scan is blind to this image.
-    expect(scan.found).toHaveLength(0);
-    expect(scan.absent.length).toBe(10);
+    expect(scan.decoded).toBe(true);
+    expect(scan.found.length).toBe(10);
+    expect(scan.absent).toEqual([]);
+    expect(scan.recoveredOnly.slice().sort()).toEqual([...names.byName.keys()].sort());
+    for (const f of scan.found) expect(f.via).toEqual(['immediate-pair']);
   });
 
   it('but does contain every discriminator, split across an immediate pair', () => {
@@ -246,7 +260,7 @@ describe('validation against a real compiled program', () => {
     expect(pairs).toBeGreaterThan(0);
   });
 
-  it('makes the diff report unscannable rather than "nothing changed"', () => {
+  it('reports structural, not unscannable, once recovery locates the declared set', () => {
     const idl = realIdl();
     const newBytes = realBytes();
     // Two distinct images, so the identical-digest short-circuit does not answer the question
@@ -254,16 +268,29 @@ describe('validation against a real compiled program', () => {
     // rebuild moves .rodata around, and nothing here is contiguous either way.
     const oldBytes = Buffer.concat([newBytes, Buffer.from([0x00])]);
     const d = diffBytecode({ oldBytes, newBytes, oldIdl: idl, newIdl: idl });
-    expect(d.confidence).toBe('unscannable');
+    expect(d.confidence).toBe('structural');
     expect(d.instructions?.added).toHaveLength(0);
     expect(d.instructions?.removed).toHaveLength(0);
-    expect(d.instructions?.idlClaimedNotFound.length ?? 0).toBeGreaterThan(0);
+    expect(d.instructions?.idlClaimedNotFound).toHaveLength(0);
+    expect(d.limits.join(' ')).not.toMatch(/scan located 0 of/);
+  });
+
+  it('still calls an image it cannot decode unscannable rather than "nothing changed"', () => {
+    // The honesty layer has to survive the scanner working: an image Dot cannot parse, with an IDL
+    // declaring ten instructions, must not print an unchanged interface. This is now the only
+    // route to `unscannable` in this file, which is exactly what it should be reserved for.
+    const idl = realIdl();
+    const noise = Buffer.alloc(4096, 0x5a);
+    const d = diffBytecode({ oldBytes: noise, newBytes: Buffer.concat([noise, Buffer.from([0x01])]), oldIdl: idl, newIdl: idl });
+    expect(d.confidence).toBe('unscannable');
+    expect(d.instructions?.idlClaimedNotFound.length).toBe(10);
     for (const x of d.instructions?.idlClaimedNotFound ?? []) {
       expect(x.why).toMatch(/not seen|blind/i);
     }
     expect(d.limits.join(' ')).toMatch(/scan located 0 of 10/);
     expect(renderBytecodeDiff(d, 'sbf-dispatch')).toMatch(/unscannable/);
   });
+
 
   it('still calls a byte-identical observation what it is', () => {
     const idl = realIdl();
