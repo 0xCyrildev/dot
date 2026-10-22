@@ -181,3 +181,51 @@ export function classifyAuthority(
   }
   return 'eoa';
 }
+
+/**
+ * A multisig quorum read from the node's own parser rather than decoded by hand.
+ *
+ * The states are deliberately uneven in what they license. Only `measured` moves a score. `raw_bytes`
+ * says the node gave us bytes and no type, which is *not* "this is not a multisig" — it is Dot not being
+ * told. And `labelled_without_quorum_fields` is the honest failure of someone else's assumption: the node
+ * called this account a multisig, but the fields Dot was told to look for are not there, so this returns
+ * the keys it actually saw instead of guessing at them. A later run against a real multisig therefore
+ * closes the gap by itself, from the evidence in the report, rather than silently scoring a wrong number.
+ */
+export type QuorumRead =
+  | { state: 'measured'; m: number; n: number; signers: string[] }
+  | { state: 'absent'; detail: string }
+  | { state: 'raw_bytes'; detail: string }
+  | { state: 'other_type'; detail: string }
+  | { state: 'labelled_without_quorum_fields'; detail: string };
+
+type ParsedAccountLike = {
+  parsed: boolean;
+  program?: string;
+  type?: string;
+  info?: Record<string, unknown>;
+} | null;
+
+const QUORUM_LABEL = /multisig/i;
+
+export function readAuthorityQuorum(account: ParsedAccountLike): QuorumRead {
+  if (account === null) return { state: 'absent', detail: 'the authority account does not exist at the requested commitment' };
+  if (!account.parsed) {
+    return { state: 'raw_bytes', detail: 'the node returned this account unparsed, so its type is unknown to Dot — not evidence that it is a single key' };
+  }
+  const label = `${account.program ?? ''} ${account.type ?? ''}`;
+  if (!QUORUM_LABEL.test(label)) {
+    return { state: 'other_type', detail: `the node labels it \`${account.program ?? 'unknown'}${account.type ? `/${account.type}` : ''}\`, not a multisig` };
+  }
+  const info = account.info ?? {};
+  const m = info.numRequiredSigners;
+  const signers = Array.isArray(info.signers) ? info.signers.filter((s): s is string => typeof s === 'string') : null;
+  if (typeof m !== 'number' || signers === null || signers.length === 0 || m > signers.length) {
+    const keys = Object.keys(info).join(', ') || '(no info object at all)';
+    return {
+      state: 'labelled_without_quorum_fields',
+      detail: `labelled \`${account.program ?? 'multisig'}\` but the required-signers count or signer list is not where the parser expects it; keys seen: ${keys}`,
+    };
+  }
+  return { state: 'measured', m, n: signers.length, signers };
+}

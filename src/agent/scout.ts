@@ -11,9 +11,9 @@ import type { SolanaClient } from '../rpc/client.js';
 import type { WireSignatureInfo } from '../rpc/wire.js';
 import { diffBytecode, renderBytecodeDiff, type BytecodeDiff } from '../state/bytecodeDiff.js';
 import { scoreDanger, type DangerInputs, type TimingReference } from '../score/danger.js';
-import { probeAuthorityFunding, type FundingProbeResult } from './funding.js';
+import { probeAuthorityFunding, probeSignerActivity, type FundingProbeResult, type SignerActivity } from './funding.js';
 import type { BlockBatcher, IngestSummary } from '../graph/batcher.js';
-import { classifyAuthority, deriveProgramData, decodeProgramData } from '../state/programdata.js';
+import { classifyAuthority, deriveProgramData, decodeProgramData, readAuthorityQuorum, type QuorumRead } from '../state/programdata.js';
 import { BudgetExhaustedError, DotError, describeError, isDotError } from '../errors.js';
 import { buildHypothesis, judgeHypothesis, type Hypothesis, type ReTestObservation } from './hypothesis.js';
 import { CANNOT_PROVE, type ChainVerification } from '../rpc/verifier.js';
@@ -158,6 +158,13 @@ export type ScoutOptions = {
   incidentAtMs?: number | null;
   /** A multisig threshold the operator knows and Dot cannot read. */
   declaredThreshold?: { m: number; n: number } | null;
+  /**
+   * Spend one `getSignaturesForAddress` per signer (capped) to date the signer set. Off by default: it is
+   * the most expensive read in the ranking and it only means something once a quorum was parsed.
+   */
+  checkSigners?: boolean;
+  /** How many signers `--check-signers` will read before stopping. The truncation is reported. */
+  maxSigners?: number;
   /** A timelock on the authority, declared. Not derivable from chain data. */
   timelockDeclared?: boolean;
   /** Max transitive depth reported; deep graphs are mostly re-exports of the same DEX. */
@@ -440,6 +447,56 @@ export class Scout {
       }
     }
     const incidentGapMs = typeof this.o.incidentAtMs === 'number' ? Math.abs(reference.ms - this.o.incidentAtMs) : null;
+    // One more call, made here rather than in `perceive` so perceive keeps the property that makes it
+    // legal to run before any expensive decision: it costs exactly one read. The quorum only feeds the
+    // ranking and the human's evidence line, never the decide step.
+    let quorum: QuorumRead | null = null;
+    if (ctx.authority.after) {
+      try {
+        quorum = readAuthorityQuorum(await this.o.client.getParsedAccountInfo(ctx.authority.after));
+        this.mark(
+          'evaluate',
+          quorum.state === 'measured'
+            ? `authority quorum: measured ${quorum.m}-of-${quorum.n} from the node's parser`
+            : `authority quorum: ${quorum.state} — ${quorum.detail}`,
+        );
+        if (quorum.state === 'measured') {
+          this.ledger.add({
+            kind: 'edge',
+            summary: `authority is a ${quorum.m}-of-${quorum.n} multisig (${quorum.n} signers), read from the node's own parser rather than declared with --multisig`,
+            ref: { program: ctx.program, from: ctx.authority.after },
+          });
+        } else if (quorum.state !== 'other_type') {
+          this.ledger.add({
+            kind: 'limit',
+            summary: `authority quorum unverified: ${quorum.detail}`,
+            ref: { program: ctx.program, from: ctx.authority.after },
+          });
+        }
+      } catch (e) {
+        // A refused or unaffordable read is an absence of evidence, and it is reported as one.
+        quorum = { state: 'raw_bytes', detail: `the authority account could not be read parsed: ${(e as Error).message}` };
+        this.ledger.add({ kind: 'limit', summary: `authority quorum not measured: ${(e as Error).message}`, ref: { program: ctx.program, from: ctx.authority.after } });
+      }
+    }
+    // The brief puts a stale signer set in the same band as a low threshold, and it is the one malice
+    // signal whose absence must point *away* from suspicion, so it is gated behind a flag that costs a
+    // call per signer and behind a quorum that has to have been parsed first.
+    let signerActivity: SignerActivity | null = null;
+    if (this.o.checkSigners && quorum?.state === 'measured') {
+      signerActivity = await probeSignerActivity(this.o.client, {
+        signers: quorum.signers,
+        ...(this.o.maxSigners !== undefined ? { maxSigners: this.o.maxSigners } : {}),
+      });
+      this.mark('evaluate', `signer set: ${signerActivity.state} — ${signerActivity.detail}`);
+      this.ledger.add({
+        kind: signerActivity.state === 'unverified' ? 'limit' : 'edge',
+        summary: `signer set ${signerActivity.state}: ${signerActivity.detail}`,
+        ref: { program: ctx.program, from: ctx.authority.after ?? undefined },
+      });
+    } else if (this.o.checkSigners && quorum?.state !== 'measured') {
+      this.mark('evaluate', `--check-signers skipped: the signer list comes from a parsed quorum and this read produced \`${quorum?.state ?? 'not_read'}\``);
+    }
     // Report the stage the run actually ended at, and the reason `act` recorded,
     // instead of a hardcoded "report/completed" that would describe a plan that
     // was never finished as one that was.
@@ -453,7 +510,7 @@ export class Scout {
       this.stoppedAt,
       built.stoppedReason ?? 'completed',
       narrative,
-      { funding, governanceGapMs, incidentGapMs, reference },
+      { funding, governanceGapMs, incidentGapMs, reference, quorum, signerActivity },
     );
   }
 
@@ -929,7 +986,7 @@ export class Scout {
     stoppedAt: DotReport['stoppedAt'],
     stopNote: string,
     narrative?: DotReport['narrative'],
-    malice?: { funding: FundingProbeResult | null; governanceGapMs: number | null; incidentGapMs: number | null; reference?: { ms: number; source: TimingReference } },
+    malice?: { funding: FundingProbeResult | null; governanceGapMs: number | null; incidentGapMs: number | null; reference?: { ms: number; source: TimingReference }; quorum?: QuorumRead | null; signerActivity?: SignerActivity | null },
   ): DotReport {
     const limits: LimitNote[] = limitsFor({
       pruned: built?.pruned ?? 0,
@@ -943,7 +1000,12 @@ export class Scout {
     const diff = this.bytecodeDiff;
     const dangerInputs: DangerInputs = {
       program,
-      authority: { posture: ctx?.authority.posture ?? 'unknown', address: ctx?.authority.after ?? null },
+      // A measured multisig outranks the curve heuristic: the node parses the authority account and
+      // reports a signer set, which is a stronger statement than "this address is on the curve".
+      authority: {
+        posture: malice?.quorum?.state === 'measured' ? 'multisig' : ctx?.authority.posture ?? 'unknown',
+        address: ctx?.authority.after ?? null,
+      },
       delta: diff
         ? {
             confidence: diff.confidence,
@@ -983,6 +1045,10 @@ export class Scout {
             timelockDeclared: this.o.timelockDeclared ?? false,
             fundingProbe: malice?.funding ? { callsSpent: malice.funding.callsSpent, signaturesSeen: malice.funding.signaturesSeen } : null,
             suspectAddressesSeen: this.o.suspectAddresses?.length ?? 0,
+            quorum: malice?.quorum?.state === 'measured' ? { m: malice.quorum.m, n: malice.quorum.n } : null,
+            quorumRead: malice?.quorum?.state ?? 'not_read',
+            quorumDetail: malice?.quorum && malice.quorum.state !== 'measured' ? malice.quorum.detail : null,
+            signerActivity: malice?.signerActivity ?? null,
           }
         : null,
       timing: ctx

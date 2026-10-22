@@ -102,8 +102,10 @@ and that is the point: a dull-looking program held by one key can be P3 by sampl
 by posture. Read `danger.category` to decide when to look, never whether the program is safe. Several
 inputs the model would want are not obtainable from chain data and the axis prints them in its own
 `notAssessed` line rather than approximating: a multisig's **threshold** (Dot does not decode the
-multisig account, so 1-of-2 and 5-of-9 both score 25 on the queue axis and `null` on the integrity axis,
-at the alarming end and labelled as an assumption), a **stale signer set** (no signer-set age is read),
+multisig account and does not label it as one — a *native* multisig is now read (the node parses the
+authority account, both axes band on the real m-of-n, and `--check-signers` dates its signers, capped at
+five with the cap reported), while a program-owned DAO still scores 25 on the queue axis and `null` on the
+integrity axis, labelled as an assumption),
 **mixer provenance** (this build ships no mixer list, so `--suspect` is the only route to that band),
 **proximity to an ecosystem event** (no feed exists, so that +10 has never been awarded), and routed
 **token value** (the graph records which mints were touched, never how much, so the ×2 multiplier is

@@ -144,6 +144,27 @@ export type DangerInputs = {
      * declaration this axis is unmeasured for a multisig and never guesses.
      */
     declaredThreshold: { m: number; n: number } | null;
+    /**
+     * A quorum read from the node's own parser (`getAccountInfo` with `jsonParsed`), which outranks an
+     * operator declaration because it is the chain talking. Null when the read did not produce one; the
+     * reason is in `quorumRead` rather than inferred from the absence.
+     */
+    quorum?: { m: number; n: number } | null;
+    /** Which outcome the quorum read had. `not_read` and `raw_bytes` are both "unknown", not "single key". */
+    quorumRead?: 'measured' | 'absent' | 'raw_bytes' | 'other_type' | 'labelled_without_quorum_fields' | 'not_read' | null;
+    /** The detail line that came with a non-`measured` read, verbatim, so the report can show it. */
+    quorumDetail?: string | null;
+    /**
+     * How recently any signer of this multisig was seen in a transaction, when `--check-signers` paid for
+     * the read. This is the brief's other half of the +10 band — "a stale signer set" — and unlike the
+     * funding axis its absence must *not* raise the score: an unread signer set is unknown, not dormant.
+     */
+    signerActivity?: {
+      state: 'stale' | 'active' | 'unverified';
+      detail: string;
+      probed: number;
+      of: number;
+    } | null;
     /** Operator-declared timelock on the authority. The brief's 0-point case needs one, and it is not on-chain. */
     timelockDeclared: boolean;
     /** How the funding evidence was obtained, for the reader's trust calibration. */
@@ -267,15 +288,21 @@ function oneBandLower(c: DangerCategory): DangerCategory {
   return i <= 0 ? c : BANDS[i - 1]!;
 }
 
-function authorityAxis(i: DangerInputs['authority']): DangerAxis {
+function authorityAxis(i: DangerInputs['authority'], integrity: DangerInputs['integrity']): DangerAxis {
   const s = AUTHORITY_SCORE[i.posture] ?? AUTHORITY_SCORE['unknown']!;
-  const label = `${s.label}${i.address ? ` (${i.address.slice(0, 6)}…)` : ''}`;
+  // A measured quorum lets this axis take one of the two bands the model defines instead of sitting at
+  // the alarming end of both. Without one, 25 and the printed assumption are the honest answer: a 1-of-2
+  // and a 5-of-9 are not the same risk, and pretending otherwise would be a guess with a number on it.
+  const measured = i.posture === 'multisig' ? integrity?.quorum ?? null : null;
+  const points = measured ? (measured.m === 1 ? 25 : 10) : s.points;
+  const label = `${s.label}${measured ? ` (${measured.m}-of-${measured.n})` : ''}${i.address ? `${measured ? '' : ' '}(${i.address.slice(0, 6)}…)` : ''}`;
   const detail = [label];
-  if (s.points === null) {
+  if (points === null) {
     return { id: 'authority', points: null, max: AXIS_MAX.authority, label: s.label, detail, notAssessed: [s.why] };
   }
-  if (i.posture === 'multisig') detail.push('threshold not readable from chain data — scored as 1-of-N');
-  return { id: 'authority', points: s.points, max: AXIS_MAX.authority, label, detail, notAssessed: [] };
+  if (measured) detail.push(`band chosen from a quorum the node parsed, not from the alarming end of two unread bands`);
+  else if (i.posture === 'multisig') detail.push('threshold not readable from chain data — scored as 1-of-N');
+  return { id: 'authority', points, max: AXIS_MAX.authority, label, detail, notAssessed: [] };
 }
 
 function deltaAxis(d: NonNullable<DangerInputs['delta']>): DangerAxis {
@@ -396,30 +423,55 @@ function integrityAxis(i: NonNullable<DangerInputs['integrity']>, posture: Autho
   }
 
   if (posture === 'multisig') {
-    // Two parts of the brief's +10 band that this build cannot see, whichever threshold ends up being
-    // used. A signer set that has not rotated in two years is a real signal, and "which signals are
-    // missing from a multisig" is exactly the question a reader should not have to infer.
-    const gaps: string[] = [
-      'stale signer set: the brief puts it in the same +10 band as a 2-of-3, and Dot cannot evaluate it — that needs the age of each signer\'s last activity, which is a read this axis does not make',
-    ];
+    const sa = i.signerActivity ?? null;
+    const stale = sa?.state === 'stale';
+    // The two halves of the brief's +10 band, kept separate because only one of them is now measurable.
+    const gaps: string[] = sa
+      ? [
+          sa.state === 'unverified'
+            ? `stale signer set: not established either way — ${sa.detail}. Idleness that cannot be read adds no points; a check that did not run is not evidence of a cold key set`
+            : `stale signer set: ${sa.detail}; the threshold and the idleness are the same +10 band in the brief, so they are not added`,
+        ]
+      : [
+          'stale signer set: the brief puts it in the same +10 band as a 2-of-3, and it was not measured on this run — `--check-signers` pays for one read per signer',
+        ];
+    if (sa && sa.probed < sa.of) {
+      gaps.push(`only ${sa.probed} of ${sa.of} signers were read, so a set that looks idle may simply have an active member further down the list`);
+    }
     if (i.funding) {
       gaps.push(`funding evidence was collected (${i.funding.state}) and is deliberately not scored here: the brief\'s top band is a *single EOA* funded from a suspect source, and a multisig is not that. Read the evidence ledger line — it is still worth knowing even though no axis credits it`);
     }
-    if (!i.declaredThreshold) {
-      return mk(null, 'multisig authority, threshold unread', [], [
-        'the brief\'s low-threshold band (10 for a 2-of-3 or a stale signer set) cannot be evaluated: `m` of `n` lives inside the multisig account, which Dot does not decode. Guessing it would manufacture the accusation rather than observe it',
+    // A measured quorum outranks a declared one; a declaration still beats a guess.
+    const threshold = i.quorum ?? i.declaredThreshold ?? null;
+    const how = i.quorum ? 'quorum read from the node\'s own parser' : i.declaredThreshold ? 'threshold declared by the operator' : null;
+    if (!threshold) {
+      const why = i.quorumRead && i.quorumRead !== 'not_read'
+        ? `the quorum read came back \`${i.quorumRead}\`${i.quorumDetail ? `: ${i.quorumDetail}` : ''}`
+        : 'the quorum was never read';
+      // A stale set is worth the band on its own even when the threshold is unread, but the axis as a
+      // whole stays unmeasured if the quorum is unknown, because 10 points of "multisig-ish" with no
+      // threshold is a weaker statement than saying which part is unknown.
+      return mk(stale ? 10 : null, stale ? `multisig with a stale signer set, threshold unread (${sa?.detail ?? ''})` : 'multisig authority, threshold unread', stale ? [`+10: ${sa?.detail ?? 'signer set idle beyond the staleness window'}`] : [], [
+        'the brief\'s low-threshold band (10 for a 2-of-3 or a stale signer set) cannot be evaluated in full: `m` of `n` lives inside the multisig account',
+        `quorum not measured: ${why}. An unread quorum is not a single key, and it is not a clean authority either`,
         ...gaps,
       ]);
     }
-    const { m, n } = i.declaredThreshold;
+    const { m, n } = threshold;
+    const label = `${m}-of-${n}${how ? ` (${how})` : ''}`;
     const low = m <= 2;
-    if (!low && i.timelockDeclared) {
-      return mk(0, `high-threshold multisig (${m}-of-${n}) behind a declared timelock`, ['0: the brief\'s 0-point case, and the only case where a timelock was declared — Dot cannot read one from chain data'], gaps);
+    if (!low && i.timelockDeclared && !stale) {
+      return mk(0, `high-threshold multisig (${label}) behind a declared timelock`, ['0: the brief\'s 0-point case, and the only case where a timelock was declared — Dot cannot read one from chain data'], gaps);
+    }
+    if (!low && i.timelockDeclared && stale) {
+      // The brief's clean case is "high threshold *with* timelock". A quorum nobody has signed with in
+      // two years is not that case, whatever the delay in front of it is.
+      return mk(10, `high-threshold multisig (${label}) behind a declared timelock, but the signer set reads as stale`, [`+10: ${sa?.detail ?? ''}. A timelock in front of keys that have not moved is a delay, not a control`], gaps);
     }
     if (low) {
-      return mk(10, `low-threshold multisig (${m}-of-${n})`, [`+10: ${m} signatures move this program, and ${m} is 2 or fewer`], [...(i.timelockDeclared ? [] : ['no timelock declared, so the 0-point "high threshold with timelock" case does not apply']), ...gaps]);
+      return mk(10, `low-threshold multisig (${label})`, [`+10: ${m} signatures move this program, and ${m} is 2 or fewer${stale ? ', and the signer set also reads as idle' : ''}`], [...(i.timelockDeclared ? [] : ['no timelock declared, so the 0-point "high threshold with timelock" case does not apply']), ...gaps]);
     }
-    return mk(10, `multisig (${m}-of-${n}), no timelock`, ['+10: the brief\'s 0-point case requires a timelock as well as a high threshold, and none was declared'], gaps);
+    return mk(10, `multisig (${label}), no timelock`, ['+10: the brief\'s 0-point case requires a timelock as well as a high threshold, and none was declared'], gaps);
   }
 
   if (posture === 'program_derived' || posture === 'unknown') {
@@ -611,7 +663,7 @@ export const SUSPECTED_MALICIOUS_VERDICT =
 
 export function scoreDanger(i: DangerInputs): DangerAssessment {
   const axes: DangerAxis[] = [
-    authorityAxis(i.authority),
+    authorityAxis(i.authority, i.integrity),
     !i.delta
       ? { id: 'codeDelta', points: null, max: AXIS_MAX.codeDelta, label: 'no bytecode diff performed', detail: [], notAssessed: ['the diff was never run, so the axis has no data'] }
       : deltaAxis(i.delta),

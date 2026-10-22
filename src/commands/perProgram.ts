@@ -208,7 +208,7 @@ function decide(f: Facts): ProgramLimitRow[] {
     ['FEED_BACKPRESSURE', 'not a property of this program: a live feed that cannot keep up drops events, and dropped is not clean'],
     ['GRPC_LIVE_PATH_UNREACHABLE', 'not a property of this program: no Geyser endpoint has ever answered this build, so live-feed detection of its upgrades is unproven in the field'],
     ['BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES', 'not a property of this program: the scan now recovers the two emission shapes measured on this toolchain, and an image lowered differently still reports nothing located'],
-    ['DANGER_RANKING_UNMEASURED_INPUTS', 'not a property of this program: no probe of it can read a multisig threshold or a signer set\'s age, name a mixer, price a token, or know when an ecosystem event happened, and "first upgrade" means first upgrade Dot kept a state file for'],
+    ['DANGER_RANKING_UNMEASURED_INPUTS', 'not a property of this program: the node can now parse a native multisig quorum and date its signers, but it does not label a program-owned DAO quorum, a timelock, a mixer list, an incident feed, or token amounts, and "first upgrade" means first upgrade Dot kept a state file for'],
   ];
   for (const [code, why] of construction) rows.push(row(code, 'by_construction', why));
 

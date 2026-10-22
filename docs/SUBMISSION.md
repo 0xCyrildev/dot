@@ -469,8 +469,12 @@ beside it.
 
 - **Authority Integrity** — +30 only when funding was *observed*: a transfer into the authority from an
   address the operator named (`--suspect`), or a first funding sitting at the very start of the wallet's
-  visible history. +20 single EOA, +10 a declared low-threshold multisig, 0 renounced or a declared
-  high threshold behind a declared timelock. "Funded by a mixer" needs a mixer list, and Dot ships none:
+  visible history. +20 single EOA, +10 a low-threshold multisig or a stale signer set, 0 renounced or a
+  high threshold behind a declared timelock. The quorum is now **read rather than assumed**: Dot asks the
+  node to parse the authority account (`getAccountInfo` with `jsonParsed`, whose label sits at
+  `data.program`), and a native multisig is banded on its real m-of-n across both axes. `--check-signers`
+  then dates the set it just listed — one read per signer, capped at five, with the cap reported. A
+  program-owned DAO (Squads-style) comes back as a program account, so it keeps the declared path. "Funded by a mixer" needs a mixer list, and Dot ships none:
   an invented one would be a claim about the world with no source, so that half of the band is reachable
   only through an operator's list, and every single-key path prints that the band was unreachable without
   one.
@@ -494,8 +498,10 @@ would be loudest on exactly the programs nobody can check.
 **A missing check is not a clean check**, and the mechanism shows up in the numbers rather than in prose:
 a node that returns a full page of signatures makes the wallet look young without proving it is, so
 `retentionBounded` withholds the +30; a refused `getSignaturesForAddress` sets `authorityFunding:
-unverified` and scores the ordinary 20 with the refusal printed; a multisig threshold and a stale signer
-set are named as gaps instead of guessed; and the probe is opt-in (`--check-funding`) because it buys calls
+unverified` and scores the ordinary 20 with the refusal printed; an authority the node hands back as raw
+bytes is `raw_bytes`, never "single key" and never "clean"; and the signer band runs the other way from the
+funding band — an unread, refused or empty signer set scores *nothing*, because a check that did not run must
+not mint suspicion; and the probes are opt-in (`--check-funding`, `--check-signers`) because each buys calls
 the analysis did not need.
 
 **How rare, measured.** [`live-malice-2026-10-22.md`](./live-malice-2026-10-22.md) runs it against two real

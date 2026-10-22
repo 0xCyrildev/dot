@@ -72,6 +72,7 @@ type GlobalOpts = {
   /** `--state`: the file Dot's own memory of past upgrades lives in. */
   state?: string;
   checkFunding?: boolean;
+  checkSigners?: boolean;
   suspect?: string[];
   governanceProgram?: string;
   incidentAt?: string;
@@ -202,6 +203,7 @@ async function build(o: GlobalOpts & BuildExtras) {
     ...(o.prior ? { prior: o.prior } : {}),
     stateFileUsed: Boolean(o.state),
     ...(o.checkFunding ? { checkFunding: true } : {}),
+    ...(o.checkSigners ? { checkSigners: true } : {}),
     ...(o.suspect?.length ? { suspectAddresses: o.suspect } : {}),
     ...(o.governanceProgram ? { governanceProgram: o.governanceProgram } : {}),
     ...(o.incidentAt ? { incidentAtMs: parseIncidentAt(o.incidentAt) } : {}),
@@ -246,6 +248,7 @@ program
   .option('--depth <n>', 'transitive dependent hops to report', '3')
   .option('--sol-usd <price>', 'operator-supplied SOL price; Dot has no price oracle and will not invent a USD figure')
   .option('--check-funding', "spend a few extra RPC calls on the upgrade authority's own funding history (malice signature: authority integrity)")
+  .option('--check-signers', 'spend one getSignaturesForAddress per signer (capped at 5) to date the signer set; means something only once the authority parses as a multisig')
   .option('--suspect <address>', 'an address whose transfers to the authority should be flagged (repeatable). Dot ships no mixer list, so without this the flagged-source band is unreachable', collect, [])
   .option('--governance-program <address>', 'a governance program whose recent activity the upgrade is timed against')
   .option('--incident-at <time>', 'declare an incident timestamp (ISO or unix) to measure the upgrade against; Dot has no incident feed')
@@ -456,6 +459,7 @@ program
           usdPerSol: opts.solUsd ? Number(opts.solUsd) : null,
           stateFileUsed: Boolean(opts.state),
           ...(opts.checkFunding ? { checkFunding: true } : {}),
+          ...(opts.checkSigners ? { checkSigners: true } : {}),
           ...(opts.suspect?.length ? { suspectAddresses: opts.suspect } : {}),
           ...(opts.governanceProgram ? { governanceProgram: opts.governanceProgram } : {}),
           ...(opts.incidentAt ? { incidentAtMs: parseIncidentAt(opts.incidentAt) } : {}),
@@ -626,6 +630,7 @@ program
         usdPerSol: opts.solUsd ? Number(opts.solUsd) : null,
         stateFileUsed: Boolean(opts.state),
         ...(opts.checkFunding ? { checkFunding: true } : {}),
+        ...(opts.checkSigners ? { checkSigners: true } : {}),
         ...(opts.suspect?.length ? { suspectAddresses: opts.suspect } : {}),
         ...(opts.governanceProgram ? { governanceProgram: opts.governanceProgram } : {}),
         ...(opts.incidentAt ? { incidentAtMs: parseIncidentAt(opts.incidentAt) } : {}),

@@ -164,3 +164,80 @@ export async function probeAuthorityFunding(client: SolanaClient, input: Funding
     walkReachedBeginning,
   };
 }
+
+/**
+ * How long a signer set can go without any signer appearing in a transaction before Dot calls it stale.
+ * A chosen constant, not a measured one, and it is printed in the report rather than hidden in the score:
+ * a quorum whose members have not transacted in two years is worth a human's attention whether or not
+ * the threshold is 2-of-3, because the keys may be cold, lost, or held by people who left.
+ */
+export const STALE_SIGNER_SET_MS = 180 * 86_400_000;
+
+export type SignerActivity =
+  | {
+      state: 'stale';
+      newestMs: number;
+      idleMs: number;
+      detail: string;
+      probed: number;
+      of: number;
+    }
+  | { state: 'active'; newestMs: number; idleMs: number; detail: string; probed: number; of: number }
+  | { state: 'unverified'; detail: string; probed: number; of: number };
+
+/**
+ * The last time any signer of this multisig was seen in a transaction the node will still list.
+ *
+ * One `getSignaturesForAddress` per signer, so this is opt-in (`--check-signers`) and capped: eleven
+ * signers is eleven calls, and a run that quietly spends them on every event is a run nobody can budget.
+ * The cap is reported, not silently applied.
+ *
+ * Absence points *away* from suspicion here, which is the opposite of the funding axis and the reason for
+ * the shape: a node that refuses the reads, or a truncated list, yields `unverified` and never the stale
+ * band. A check that did not run cannot mint ten points of malice.
+ */
+export async function probeSignerActivity(
+  client: SolanaClient,
+  input: { signers: string[]; maxSigners?: number; limit?: number; nowMs?: number },
+): Promise<SignerActivity> {
+  const of = input.signers.length;
+  const max = Math.max(1, input.maxSigners ?? 5);
+  const limit = Math.max(1, input.limit ?? 1);
+  const now = input.nowMs ?? Date.now();
+  const probed = input.signers.slice(0, Math.min(of, max));
+
+  let newestMs: number | null = null;
+  let failures = 0;
+  for (const signer of probed) {
+    try {
+      const sigs = await client.getSignaturesForAddress(signer, { limit });
+      const times = sigs.map((s) => s.blockTime).filter((t): t is number => typeof t === 'number');
+      if (times.length === 0) {
+        // No listed signature is not "never used": it is also what a retention-trimmed or fresh account
+        // says. Counted as a failure of the read, not as evidence of idleness.
+        failures++;
+        continue;
+      }
+      const at = Math.max(...times) * 1000;
+      newestMs = newestMs === null ? at : Math.max(newestMs, at);
+    } catch {
+      failures++;
+    }
+  }
+
+  const truncation = of > probed.length ? ` ${probed.length} of ${of} signers were probed (--check-signers caps at ${probed.length})` : '';
+  if (newestMs === null) {
+    return {
+      state: 'unverified',
+      detail: `no signer activity could be read (${failures} of ${probed.length} probes returned nothing or failed), so idleness is unknown rather than long${truncation}`,
+      probed: probed.length,
+      of,
+    };
+  }
+  const idleMs = now - newestMs;
+  const days = Math.round(idleMs / 86_400_000);
+  const detail = `the most recent transaction any probed signer appears in is ${days} day(s) old${truncation}`;
+  return idleMs > STALE_SIGNER_SET_MS
+    ? { state: 'stale', newestMs, idleMs, detail, probed: probed.length, of }
+    : { state: 'active', newestMs, idleMs, detail, probed: probed.length, of };
+}

@@ -221,6 +221,47 @@ export class SolanaClient {
   }
 
   /**
+   * One account, asked of the node's *own* parser.
+   *
+   * `parsed` is kept separate from `program` because they mean different things and collapsing them is
+   * how an absent check starts looking like a negative one: `parsed: false` means the node handed back
+   * raw bytes and Dot learned nothing about the account type, whereas `parsed: true` with a label is the
+   * node telling us what it thinks the account is.
+   *
+   * The nested shape comes from a real mainnet response (2026-10-22, a `Tokenkeg…`-owned account), not
+   * from a recollection: the label sits at `data.program`, the account subtype at `data.parsed.type`,
+   * and the fields under `data.parsed.info`.
+   */
+  async getParsedAccountInfo(address: string): Promise<{
+    owner: string;
+    space: number | null;
+    parsed: boolean;
+    program?: string;
+    type?: string;
+    info?: Record<string, unknown>;
+  } | null> {
+    const res = await this.call<WithContext<WireAccountState<unknown> | null>>(
+      'getAccountInfo',
+      [address, { encoding: 'jsonParsed', commitment: this.commitment }],
+    );
+    const value = res?.value ?? null;
+    if (!value) return null;
+    const data = value.data as { program?: string; space?: number; parsed?: { type?: string; info?: Record<string, unknown> } } | unknown;
+    if (!data || typeof data !== 'object' || Array.isArray(data) || !('parsed' in data)) {
+      return { owner: value.owner, space: value.space ?? null, parsed: false };
+    }
+    const d = data as { program?: string; space?: number; parsed?: { type?: string; info?: Record<string, unknown> } };
+    return {
+      owner: value.owner,
+      space: value.space ?? d.space ?? null,
+      parsed: true,
+      ...(d.program !== undefined ? { program: d.program } : {}),
+      ...(d.parsed?.type !== undefined ? { type: d.parsed.type } : {}),
+      ...(d.parsed?.info !== undefined ? { info: d.parsed.info } : {}),
+    };
+  }
+
+  /**
    * Where the node says these signatures live. `null` means the node does not know —
    * outside retention and not in the recent ledger — which is recorded as unknown, not
    * as "not finalized".

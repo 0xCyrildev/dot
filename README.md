@@ -276,7 +276,8 @@ never sampled the thing the claim depends on, answers `not_testable` with the sh
 **Malice detection — the signature of an attack, not the intent.** Dot cannot read what anybody meant, so
 the three signature axes read what the chain says: who funded the upgrade authority and when
 (`authority integrity`, probed only under `--check-funding`, because it buys calls the analysis did not
-need), whether the new bytecode answers to a selector the published interface denies
+need; a multisig's quorum is read from the node's own parser, and `--check-signers` dates its signer set,
+capped at five and reporting the cap), whether the new bytecode answers to a selector the published interface denies
 (`code anomaly`), and whether the timing fits this program's own cadence (`timing anomaly`). When the gate
 is satisfied the report prints `VERDICT: SUSPECTED_MALICIOUS` above the fold, in both watch summary lines,
 and in the ranking block — followed by the axis points that produced it, the gate that allowed it, and a
