@@ -24,6 +24,16 @@ that line is re-run after a publish, every `1.0.0` measurement in this section d
 release, not the current package — and the version drift that made them diverge was itself a bug
 (`dot --version` and the MCP handshake hardcoded the string; `src/version.ts` reads the manifest now).
 
+**Re-run for 1.1.0 on 2026-10-22, after the publish.** `npm view @zeroxcyril/dot dist-tags` → `latest:
+1.1.0`, and `bash scripts/verify-install.sh --from registry` → 6/6 bins executed, each reporting `1.1.0`,
+modes 777. The published tarball was unpacked and read as well: it contains `dist/score/danger.js` (with
+the `SUSPECTED_MALICIOUS` alarm) and `dist/agent/funding.js`, so the danger ranking and the
+malice-signature axes are installable from npm rather than main-only. One defect is fixed on `main` and
+*not* in the released artifact: the shipped `--threshold` grammar is
+`/^(\d+)\s*(?:-?of|-)\s*(\d+)$/i`, which rejects `2-of-3` — the form the flag's own help text and error
+message quote. Run against the published source: `2of3`, `2-3` and `2 of 3` parse, `2-of-3` is refused.
+`test/cli-args.test.ts` pins the grammar from now on, which is the only reason it was noticed.)
+
 `scripts/verify-install.sh` is now the canonical form of that check, and `test/install.test.ts`
 drives the *script* rather than re-implementing the steps in TypeScript — the suite and the person
 publishing from a terminal walk one path, so a green test means the operator command works. Re-run

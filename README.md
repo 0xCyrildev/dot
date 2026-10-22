@@ -57,11 +57,16 @@ about the evidence Dot was allowed to gather, not an all-clear.
 
 ## Install and first run
 
-Published as `@zeroxcyril/dot@1.0.0` — re-check with `npm view @zeroxcyril/dot version`, because the
-registry is the only source for that sentence. **The version in this checkout is 1.1.0 and is not on the
-registry yet**, so `npm install -g @zeroxcyril/dot` gives you 1.0.0, which predates the bytecode-scanner
-recovery, the danger ranking and the malice-signature axes; install from a clone below to get those. The
-first release and its install evidence are recorded in
+Published as `@zeroxcyril/dot@1.1.0` — re-check with `npm view @zeroxcyril/dot dist-tags`, because the
+registry is the only source for that sentence, and this line has been wrong before. 1.1.0 went out on
+2026-10-22 and its tarball carries the bytecode-scanner recovery, the danger ranking and the
+malice-signature axes (verified against the published artifact: `dist/score/danger.js` contains the
+alarm, `dist/agent/funding.js` is shipped).
+
+**One bug is fixed on `main` but not in 1.1.0:** `--threshold 2-of-3` is rejected by the released parser,
+because the grammar that its own error message quotes did not accept the trailing dash. Type `2of3` or
+`2-3`, or install from the clone below. `test/cli-args.test.ts` pins the grammar now, which is how it was
+found. The first release and its install evidence are recorded in
 `docs/blocked.md` §1. The claim is checked rather than asserted: `bash scripts/verify-install.sh
 --from registry` installs this version from the registry into a throwaway prefix and **executes all
 six bins**, and `npm publish` runs that same script as `prepublishOnly` — so a package whose bins do

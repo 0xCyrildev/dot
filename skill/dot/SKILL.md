@@ -15,10 +15,10 @@ of every integrator that ever did a CPI into the program.
 
 ## Install
 
-Published on the registry: `@zeroxcyril/dot@1.0.0` — verify with `npm view @zeroxcyril/dot version`,
-which is the only honest source for that sentence. **The manifest version in this checkout is newer and
-is not on the registry**, so a global install gets 1.0.0 and misses whatever this tree added since;
-install from the clone if you need the current `main`. Both forms below were run against the registry
+Published on the registry: `@zeroxcyril/dot@1.1.0` — verify with `npm view @zeroxcyril/dot dist-tags`,
+which is the only honest source for that sentence. It carries the danger ranking and the malice-signature
+axes. One caveat for a released build: 1.1.0's `--threshold` parser rejects the documented `2-of-3` form
+(type `2of3` or `2-3`); the fix is on `main`. Both install forms below were run against the registry
 before being written here: a global install into a throwaway prefix reported the manifest version from
 all six bins, and the `npx` form printed the limit catalogue.
 
