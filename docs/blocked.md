@@ -167,7 +167,7 @@ replay, `layoutMismatch` should stay near zero. A flat `updates` with no error i
 that matches nothing — not a quiet chain. `isReplay`, keepalive and reconnect stay
 unexercised until that run happens.
 
-## 4. Bytecode diff validated against real compiled Anchor bytecode — MEASURED, THE ASSUMPTION FAILED, THE SCANNER NOW READS THE EMISSION
+## 4. Bytecode diff validated against real compiled Anchor bytecode — MEASURED, REFUTED, THEN FIXED
 
 This section used to read "blocked: no toolchain, no artifact, egress unavailable". Egress
 came back, the toolchain installed itself, and the check ran. It refuted the assumption, and

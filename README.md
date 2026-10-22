@@ -8,8 +8,14 @@ chain, the question every existing tool answers is about B. The question that ac
 about A and C: who calls the program that just changed, how often, and how much value routes through
 them.
 
+Dot grew out of [Chase](https://github.com/0xCyrildev/Chase), the dynamic-analysis tool I built for
+Sui Move. Chase is the same bet — that behaviour tells you more than intent does — and I wanted
+something for Solana, so this is what I built rather than a port: a Move program's upgrade is a
+package publish, a Solana program's upgrade is a bytecode swap under one shared loader, and the part
+that has to be rebuilt for the second case is who is standing in the blast radius.
+
 ![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-the suite runs with no network and no API key (the only skips are gated live-endpoint tests),
+The suite runs with no network and no API key (the only skips are gated live-endpoint tests),
 and `tsc --noEmit` / `npm run build` are clean. The count at each release is recorded in
 [`docs/RELEASE-v1.0.0.md`](docs/RELEASE-v1.0.0.md) rather than repeated here, because a number copied
 into two documents is a number that goes stale in two places.
