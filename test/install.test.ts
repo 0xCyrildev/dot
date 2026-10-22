@@ -78,8 +78,14 @@ describe('packaged install', () => {
   }, 240_000);
 
   it('ships the bins executable, not at tsc default mode', () => {
-    const installed = join(prefix, 'node_modules', '@zeroxcyril', 'dot', 'dist', 'cli', 'index.js');
-    if (!existsSync(installed)) return;
+    // Resolved through npm rather than assumed. The path used to be
+    // `${prefix}/node_modules/@zeroxcyril/dot/...`, which does not exist: npm installs globals
+    // under `${prefix}/lib/node_modules`. Against that wrong path the test had an
+    // `if (!existsSync) return`, so it had been passing vacuously since it was written —
+    // a green that measured nothing, which is the one thing this suite is supposed to refuse.
+    const globalRoot = npm(['root', '--global'], { npm_config_prefix: prefix }).trim();
+    const installed = join(globalRoot, '@zeroxcyril', 'dot', 'dist', 'cli', 'index.js');
+    expect(existsSync(installed), `installed entry missing at ${installed} — the install layout changed and this test stopped measuring it`).toBe(true);
     const mode = execFileSync('stat', ['-c', '%a', installed], { encoding: 'utf8' }).trim();
     expect(['755', '775', '750', '770']).toContain(mode.slice(-3));
   });

@@ -15,18 +15,24 @@ of every integrator that ever did a CPI into the program.
 
 ## Install
 
-Not published to npm yet (`npm whoami` returns E401 in the build environment, and no line here claims
-otherwise). From a clone:
+Not published to npm yet. Measured 2026-10-22: `npm publish --dry-run` succeeds (122 files),
+`npm whoami` returns `E401`, and `npm publish --access public` returns
+`E404 Not Found - PUT https://registry.npmjs.org/@zeroxcyril%2fdot` — the registry answers, there
+are no credentials, so no line here claims otherwise. From a clone:
 
 ```bash
 npm ci && npm run build
 node dist/cli/index.js analyze <PROGRAM_ID>
 ```
 
-or `npm link` with a prefix you own (`npm config set prefix ~/.npm-global`), or `npm pack` and
-`npm install -g ./zeroxcyril-dot-0.1.0.tgz` — the last is the form `test/install.test.ts` actually
-verifies. The bare bin is `dot`, which collides with graphviz; `dot-analyze`, `dot-watch`, `dot-mcp`,
-`dot-limits`, `dot-calibrate` do not.
+or `npm link` with a prefix you own (`npm config set prefix ~/.npm-global`; on the build box the
+default prefix resolves to a `/usr/local/lib/node_modules` that does not exist), or `npm pack` and
+`npm install -g --prefix /tmp/<dir> ./zeroxcyril-dot-0.1.0.tgz` — the last is the form
+`test/install.test.ts` verifies, and every one of the six bins was executed from that install, not
+listed. The bare bin is `dot`, which collides with graphviz; `dot-analyze`, `dot-watch`, `dot-mcp`,
+`dot-limits`, `dot-calibrate` do not. One alias quirk to know before scripting around it: an alias
+dispatches to its own subcommand and **ignores a stray extra argument** —
+`dot-calibrate analyze X` runs a calibration instead of failing.
 
 ## When to use it
 

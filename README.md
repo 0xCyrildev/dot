@@ -48,10 +48,12 @@ about the evidence Dot was allowed to gather, not an all-clear.
 
 ## Install and first run
 
-Not published to npm yet — `npm whoami` returns E401 from the build environment, so
-`npm install -g @zeroxcyril/dot` would be an unverified line and is therefore not
-printed anywhere in this file. See `docs/blocked.md`. Every command below is one that
-was actually run, which is the same rule Chase's README states out loud.
+Not published to npm yet. Re-measured 2026-10-22: `npm publish --dry-run` succeeds (122 files),
+`npm whoami` returns E401 and `npm publish --access public` returns `E404 … PUT
+https://registry.npmjs.org/@zeroxcyril%2fdot` — the registry is reachable, the credentials are not,
+so `npm install -g @zeroxcyril/dot` would be an unverified line and is therefore not printed
+anywhere in this file. See `docs/blocked.md` §1. Every command below is one that was actually run,
+which is the same rule Chase's README states out loud.
 
 From a clone:
 

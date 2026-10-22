@@ -3,17 +3,40 @@
 Recorded instead of worked around, because a plausible-looking substitute for a
 blocked verification is how a tool like this ends up shipping a lie.
 
-## 1. Publishing `@zeroxcyril/dot` to npm — BLOCKED (no credentials)
+## 1. Publishing `@zeroxcyril/dot` to npm — BLOCKED (registry reachable, no credentials)
 
-`npm publish --dry-run` succeeds (92 files, valid manifest, executable bins) and
-`npm install -g ./zeroxcyril-dot-0.1.0.tgz` into a clean prefix installs and runs all
-six bins — `test/install.test.ts` proves it. But `npm whoami` returns
-`E401 Unauthorized` from this environment, so the package is **not published**.
+Re-run 2026-10-22, with the exact answers rather than a summary:
 
-Consequence for the docs: no README line may read `npm install -g @zeroxcyril/dot` as
-a currently working command. The verified forms are `npm ci && npm run build` +
-`node dist/cli/index.js …`, or a tarball install. Unblocks with registry auth; the
-manifest name and `bin` map are already scoped.
+| command | result |
+|---|---|
+| `npm publish --dry-run` | succeeds — 122 files packed, `+ @zeroxcyril/dot@0.1.0` |
+| `npm whoami` | `npm error code E401 Unauthorized - GET https://registry.npmjs.org/-/whoami` |
+| `npm publish --access public` | `npm error code E404 Not Found - PUT https://registry.npmjs.org/@zeroxcyril%2fdot` — "could not be found or you do not have permission to access it" |
+| `npm pack` + `npm install -g --prefix /tmp/dot-prefix2 ./zeroxcyril-dot-0.1.0.tgz` | installs clean; all six bins present and executing |
+
+So the registry is **reachable** — it answered the PUT with a 404, which is what npm returns for
+an unauthenticated write to a package that does not exist yet. The blocker is credentials, not
+network, and the distinction matters because "publish is blocked" reads like an environment
+limit when it is an account limit.
+
+Bin verification was done by execution, not by `ls`: `dot` and `dot-limits` print the status
+line, `dot-analyze` rejects a malformed pubkey with Dot's own message, `dot-watch` demands
+`--targets`, `dot-mcp` emits `dot mcp ready (mode rules, 21 codes)` on stderr, and
+`dot-calibrate` measured a live block sample. Each alias dispatches to its own subcommand rather
+than to the root help — which is the failure `test/install.test.ts` exists for, because `tsc`
+emits bins at mode 0664 and a global install then execs a file the shell will not run.
+
+One gap that surfaced while testing the aliases: `dot-calibrate analyze <x>` **runs calibrate and
+ignores the stray argument** instead of erroring. Harmless, and arguably how a single-entry
+dispatcher should behave, but it means an alias cannot be used to catch a typo'd subcommand.
+Left as-is and named here rather than quietly changed.
+
+Consequence for the docs: no README line may read `npm install -g @zeroxcyril/dot` as a currently
+working command. The verified forms are `npm ci && npm run build` + `node dist/cli/index.js …`,
+the tarball install above, or `npm link` after pointing the prefix somewhere writable
+(`npm config set prefix ~/.npm-global`) — `/usr/local/lib/node_modules` does not exist on this box.
+Unblocks with registry auth for the `@zeroxcyril` scope; the manifest name and `bin` map are
+already scoped.
 
 ## 2. Live mainnet verification — PARTLY UNBLOCKED (egress returned 2026-10-21)
 
@@ -53,10 +76,16 @@ same numbers reproduced on a second run):
   `CANNOT_PROVE` rather than hidden.
 - `dot calibrate --blocks 6 --out docs/calibrated-model-2026-10-21.json` measured a real
   cost model off `api.mainnet-beta`: 6/6 blocks readable, **506 transactions per block**,
-  **18,040 bytes per fetched transaction**, `measuredAt` stamped in the file. Two consecutive
-  runs returned 506 and 687 tx/block, which is the honest statement of how much a six-block
-  sample is worth: an order-of-magnitude-ish spread on a busy chain, so the model is labelled
-  with its endpoint and date rather than treated as a constant.
+  **18,040 bytes per fetched transaction**, `measuredAt` stamped in the file. Three separate
+  runs on this box returned **506**, **687** and **262** transactions per block (17,123–19,761
+  bytes per transaction) — a 2.6x spread on a busy chain from a six-block sample, which is the
+  honest statement of what the number is worth. The model is therefore labelled with its
+  endpoint and date, and a deployment is told to re-run it rather than trust this one.
+- `DOT_COST_MODEL=docs/calibrated-model-2026-10-21.json dot analyze …` changes the plan the
+  report prints: `docs/live-calibrated-2026-10-22.md` shows a real run computing **337.3x** byte
+  amplification from the measured model where the defaults would have computed 2000x. The
+  artifacts captured *before* the calibration still say `defaults_unverified`, and are left as
+  they were rather than regenerated — they are the record of what that run actually used.
 - Supplied via `--cost-model` or `DOT_COST_MODEL`, the ingestion rationale changes accordingly:
   the same 6-signature sample computed **506x byte amplification** instead of the **2000x**
   the shipped defaults implied. The defaults were wrong in opposite directions on both axes —
