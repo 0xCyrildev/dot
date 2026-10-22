@@ -57,16 +57,15 @@ about the evidence Dot was allowed to gather, not an all-clear.
 
 ## Install and first run
 
-Published as `@zeroxcyril/dot@1.1.0` — re-check with `npm view @zeroxcyril/dot dist-tags`, because the
-registry is the only source for that sentence, and this line has been wrong before. 1.1.0 went out on
-2026-10-22 and its tarball carries the bytecode-scanner recovery, the danger ranking and the
-malice-signature axes (verified against the published artifact: `dist/score/danger.js` contains the
-alarm, `dist/agent/funding.js` is shipped).
+Published as `@zeroxcyril/dot@1.2.0` — re-check with `npm view @zeroxcyril/dot dist-tags`, because the
+registry is the only source for that sentence, and this line has been wrong before. 1.2.0 adds the
+multisig-quorum read, `--check-signers`, `DOT_STATE_FILE` for MCP, and the `--threshold` fix; 1.1.0 was
+the release that carried the bytecode-scanner recovery, the danger ranking and the malice-signature axes.
 
-**One bug is fixed on `main` but not in 1.1.0:** `--threshold 2-of-3` is rejected by the released parser,
-because the grammar that its own error message quotes did not accept the trailing dash. Type `2of3` or
-`2-3`, or install from the clone below. `test/cli-args.test.ts` pins the grammar now, which is how it was
-found. The first release and its install evidence are recorded in
+**`--threshold 2-of-3` needs 1.2.0.** In 1.1.0 the parser rejected the very form its own help text and
+error message quote — the grammar let `-?of` consume `-of` and left the trailing `-3` nowhere to go — so
+`2of3` and `2-3` worked while `2-of-3` did not. Fixed, and `test/cli-args.test.ts` pins the grammar now,
+which is how the bug was found at all. The first release and its install evidence are recorded in
 `docs/blocked.md` §1. The claim is checked rather than asserted: `bash scripts/verify-install.sh
 --from registry` installs this version from the registry into a throwaway prefix and **executes all
 six bins**, and `npm publish` runs that same script as `prepublishOnly` — so a package whose bins do
@@ -95,8 +94,8 @@ Or from a local build of this checkout, which is the path `test/install.test.ts`
 installs into a throwaway prefix, executes all six bins):
 
 ```bash
-npm pack                                                    # -> zeroxcyril-dot-1.1.0.tgz
-npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-1.1.0.tgz
+npm pack                                                    # -> zeroxcyril-dot-1.2.0.tgz
+npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-1.2.0.tgz
 /tmp/dot-prefix/bin/dot-limits
 npm run verify-install     # or: build → pack → install into a throwaway prefix → exec all six bins
 ```

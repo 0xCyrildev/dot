@@ -34,6 +34,16 @@ malice-signature axes are installable from npm rather than main-only. One defect
 message quote. Run against the published source: `2of3`, `2-3` and `2 of 3` parse, `2-of-3` is refused.
 `test/cli-args.test.ts` pins the grammar from now on, which is the only reason it was noticed.)
 
+**1.2.0 published on 2026-10-22, and it closes that defect.** `npm publish` ran `scripts/verify-install.sh`
+as `prepublishOnly` before uploading, so the artifact that went out had already been installed into a
+throwaway prefix and its six bins executed. The correspondence between tag and artifact is the rule now, not
+an accident: `v1.1.0` sits at `91879ae`, the commit whose tree produced the 1.1.0 tarball, verified by
+unpacking it and finding none of the code that landed afterwards (`checkSigners`, `getParsedAccountInfo`,
+`src/cli/args.ts`, `src/state/priorStore.ts` all absent from the published `dist/`). A tag that points at the
+branch tip would agree with the registry in name only, which is the same class of drift as a manifest claiming
+a publish — both are a version string nobody checked. The re-verification command for any release stays
+`bash scripts/verify-install.sh --from registry`; run it after publishing, not before.
+
 `scripts/verify-install.sh` is now the canonical form of that check, and `test/install.test.ts`
 drives the *script* rather than re-implementing the steps in TypeScript — the suite and the person
 publishing from a terminal walk one path, so a green test means the operator command works. Re-run

@@ -1,6 +1,6 @@
 # Submission: Dot — agentic blast-radius analysis for the Solana on-chain supply chain
 
-**Repo:** <https://github.com/0xCyrildev/dot> · **npm:** `@zeroxcyril/dot@1.1.0` is what the registry serves (`npm view @zeroxcyril/dot dist-tags`, measured 2026-10-22, and the published tarball was unpacked and checked: it carries the danger ranking, `dist/score/danger.js`, and the funding probe, `dist/agent/funding.js`). Install evidence is checked rather than asserted: `bash scripts/verify-install.sh --from registry` installs from the registry and executes all six bins (`docs/blocked.md` §1). One bug is fixed on `main` and not yet in a release: 1.1.0's `--threshold` parser rejects the `2-of-3` form its own help text quotes. **The `v1.1.0` tag points at the commit that produced that npm artifact, not at `main`** — verified by unpacking the tarball, which contains none of the code that landed after it (`checkSigners`, `getParsedAccountInfo`, `src/cli/args.ts`, `src/state/priorStore.ts` are all absent from the published `dist/`). `main` therefore carries unreleased work — the multisig quorum read, `--check-signers`, `DOT_STATE_FILE`, the clamp note and the parser fix — which is what 1.2.0 will be. Re-check the correspondence with `git show v1.1.0 --no-patch` against `npm view @zeroxcyril/dot time.1.1.0`
+**Repo:** <https://github.com/0xCyrildev/dot> · **npm:** `@zeroxcyril/dot@1.2.0` is what the registry serves (`npm view @zeroxcyril/dot dist-tags`; each release is checked by unpacking its own tarball, so this line is not inherited from the manifest). Install evidence is checked rather than asserted: `bash scripts/verify-install.sh --from registry` installs from the registry and executes all six bins (`docs/blocked.md` §1). The tags point at the commits that produced the artifacts, not at `main` — v1.1.0 sits at `91879ae` because that is the tree the published 1.1.0 was built from, verified by what the tarball does not contain.
 **Ecosystem:** Solana · **Language:** TypeScript, Node ESM · **Category:** dynamic analysis / upgrade & supply-chain monitoring
 **Interfaces:** CLI (6 bins), library, MCP server over stdio, agent skill (`skill/dot/`)
 **Evidence of being built against the chain:** [`docs/lessons.md`](./lessons.md) · [`docs/live-run-2026-10-21.json`](./live-run-2026-10-21.json)
@@ -357,7 +357,7 @@ than quoting the spec, and confirms the (program, programData) pair from the pro
 **Re-measured, not inherited.** RPC egress came back on this box during this session, so
 `docs/blocked.md` was rewritten from measurement: what has now been run against mainnet, what was
 fixed as a result, and what still has never been exercised — the Geyser path has still never met a
-live endpoint. The package is published (`@zeroxcyril/dot@1.1.0` as re-measured on 2026-10-22, verified by installing from the registry and running every bin); the artifacts below are the measured
+live endpoint. The package is published (`@zeroxcyril/dot@1.2.0`, verified by installing from the registry and running every bin); the artifacts below are the measured
 ones; everything else stays labelled as the claim it is.
 
 ## 8. Live verification

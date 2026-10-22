@@ -15,10 +15,11 @@ of every integrator that ever did a CPI into the program.
 
 ## Install
 
-Published on the registry: `@zeroxcyril/dot@1.1.0` — verify with `npm view @zeroxcyril/dot dist-tags`,
-which is the only honest source for that sentence. It carries the danger ranking and the malice-signature
-axes. One caveat for a released build: 1.1.0's `--threshold` parser rejects the documented `2-of-3` form
-(type `2of3` or `2-3`); the fix is on `main`. Both install forms below were run against the registry
+Published on the registry: `@zeroxcyril/dot@1.2.0` — verify with `npm view @zeroxcyril/dot dist-tags`,
+which is the only honest source for that sentence. It carries the danger ranking, the malice-signature
+axes, the quorum read and `DOT_STATE_FILE`. Versions before 1.2.0 reject `--threshold 2-of-3` (the shipped
+grammar did not accept the trailing dash its own help text quotes); type `2of3` or `2-3` on 1.0.0/1.1.0.
+Both install forms below were run against the registry
 before being written here: a global install into a throwaway prefix reported the manifest version from
 all six bins, and the `npx` form printed the limit catalogue.
 
