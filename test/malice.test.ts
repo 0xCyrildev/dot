@@ -49,7 +49,7 @@ describe('malice verdict — the extreme case', () => {
   it('states the evidence in the sentence, not just the label', () => {
     expect(attack.malice.evidence).toMatch(/Authority integrity 30\/30/);
     expect(attack.malice.evidence).toMatch(/`drain`/);
-    expect(attack.malice.evidence).toMatch(/Score: \d+\/100\.$/);
+    expect(attack.malice.evidence).toMatch(/Score: \d+\/100( \(raw \d+\/180 before the clamp\))?\.$/);
     const out = renderDanger(attack);
     expect(out).toMatch(/MALICE HEURISTIC: \*\*SUSPECTED_MALICIOUS\*\* — a scream, not a proof/);
     expect(out).toMatch(/signature axes: authorityIntegrity 30\/30, codeAnomaly 20\/20, timingAnomaly 10\/10 = 60\/60/);
@@ -168,7 +168,7 @@ describe('malice output — the alarm sentence, and the gaps the axes cannot see
     expect(after).toMatch(/Authority integrity 30\/30/);
     expect(after).toMatch(/funded 2 hours? ago/);
     expect(after).toMatch(/`drain`/);
-    expect(after).toMatch(/Score: \d+\/100\./);
+    expect(after).toMatch(/Score: \d+\/100 \(raw \d+\/180 before the clamp\)\./);
   });
 
   it('says nothing at all about malice on the safe shape: immutable authority, additive diff', () => {
@@ -235,6 +235,30 @@ describe('malice output — the alarm sentence, and the gaps the axes cannot see
     expect(mk('watcher-detected').axes.find((a) => a.id === 'timingAnomaly')!.detail.join(' ')).not.toMatch(/own clock/);
     // Either way the axis admits it counts signatures, not proposals.
     expect(mk('watcher-detected').axes.find((a) => a.id === 'timingAnomaly')!.notAssessed.join(' ')).toMatch(/cannot tell a governance \*proposal\*/);
+  });
+
+  it('names the clamp only when the clamp actually bit', () => {
+    // Same gate, raw total under 100: 40 posture + 30 measured funding + 20 undeclared selector, with a
+    // previously-observed program and no dependents. Without this the "(raw …)" suffix would be
+    // boilerplate, and a reader could not tell a maxed-out score from one that never reached the ceiling.
+    const d = scoreDanger(base({
+      delta: { confidence: 'structural', addedEntrypoints: [], undeclaredEntrypoints: ['drain'], accountChanges: [] },
+      radius: { direct: 0, transitive: 0, lamportsRouted: 0, usdPerSol: null, mintsTouched: 0 },
+      behavior: { priorDigestAt: '2026-01-01T00:00:00.000Z', stateFileUsed: true },
+      integrity: { funding: { state: 'recent_funding_observed', ageMs: 2 * HOUR, retentionBounded: false, detail: 'first funded 2 hours ago' }, declaredThreshold: null, timelockDeclared: false, fundingProbe: { callsSpent: 2, signaturesSeen: 1 } },
+      timing: null,
+    }));
+    expect(d.malice.flagged).toBe(true);
+    expect(d.rawScore).toBeLessThanOrEqual(100);
+    expect(d.malice.evidence).toMatch(/Score: \d+\/100\.$/);
+
+    const clamped = scoreDanger(base({
+      delta: { confidence: 'structural', addedEntrypoints: [], undeclaredEntrypoints: ['drain'], accountChanges: [] },
+      integrity: { funding: { state: 'recent_funding_observed', ageMs: 2 * HOUR, retentionBounded: false, detail: 'first funded 2 hours ago' }, declaredThreshold: null, timelockDeclared: false, fundingProbe: { callsSpent: 2, signaturesSeen: 1 } },
+      timing: null,
+    }));
+    expect(clamped.rawScore).toBeGreaterThan(100);
+    expect(clamped.malice.evidence).toMatch(/\(raw \d+\/180 before the clamp\)\.$/);
   });
 
   it('prints the seven-axis clamp line, not the four-axis one it used to claim', () => {

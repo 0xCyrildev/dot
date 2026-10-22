@@ -29,6 +29,7 @@ import { renderReplay, replayTransaction } from '../commands/replay.js';
 import { resolveIdl } from '../idl.js';
 import { loadSeedFile, renderHoldings, sumHoldings } from '../state/seeds.js';
 import { formatEscalation, maliceAlarm, renderMarkdown, type DotReport } from '../report.js';
+import { loadPrior, savePrior } from '../state/priorStore.js';
 import { loadHypothesisFile, renderHypothesis } from '../agent/hypothesis.js';
 import type { Hypothesis } from '../agent/hypothesis.js';
 import { BlastRadiusScanner, renderBlastRadius, loadProgramList, loadAuthorityMap } from '../commands/blastRadius.js';
@@ -296,10 +297,9 @@ program
     // run's answer is "seen before" rather than "first one I remember".
     const prior = new Map<string, PriorDigest>();
     if (opts.state) {
-      try {
-        const loaded = JSON.parse(await readFile(opts.state, 'utf8')) as Record<string, PriorDigest>;
-        for (const [k, v] of Object.entries(loaded)) prior.set(k, v);
-      } catch {
+      const loaded = await loadPrior(opts.state);
+      if (loaded) for (const [k, v] of loaded) prior.set(k, v);
+      else {
         process.stderr.write('note: state file unreadable or absent; the behavioural axis will report no prior digest, which is an absence of memory, not of upgrades\n');
       }
     }
@@ -330,7 +330,7 @@ program
         tier: report.tier,
         upgradesAt: prior.get(programId)?.upgradesAt,
       });
-      await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
+      await savePrior(opts.state, prior);
     }
     if (opts.seeds) {
       const specs = await loadSeedFile(opts.seeds);
@@ -411,10 +411,9 @@ program
     const daemonClient = new SolanaClient({ transport: client.transport, budget: daemonBudget, commitment: opts.commitment as 'finalized' });
     const prior = new Map<string, PriorDigest>();
     if (opts.state) {
-      try {
-        const loaded = JSON.parse(await readFile(opts.state, 'utf8')) as Record<string, PriorDigest>;
-        for (const [k, v] of Object.entries(loaded)) prior.set(k, v);
-      } catch {
+      const loaded = await loadPrior(opts.state);
+      if (loaded) for (const [k, v] of loaded) prior.set(k, v);
+      else {
         process.stderr.write('note: state file unreadable; starting with no prior graph (Decide will treat dependents as unobserved)\n');
       }
     }
@@ -487,7 +486,7 @@ program
         const rep = await analysisScout.run({ program: event.program, event });
         recordDigest(prior, event.program, rep, event.changed.bytecode);
 
-        if (opts.state) await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
+        if (opts.state) await savePrior(opts.state, prior);
         const alarm = maliceAlarm(rep);
         process.stdout.write(
           `${rep.tier}${rep.tierSource === 'integrity' ? ' [integrity]' : ''} score=${rep.score} conf=${rep.confidence} danger=${rep.danger ? `${rep.danger.category}/${rep.danger.score}` : 'n/a'} stopped=${rep.stoppedAt} rpc=${rep.budget.spent.rpcCalls} deps=${rep.blastRadius?.directCallers ?? 'n/a'} ${rep.program}${alarm.suffix}\n`,
@@ -666,7 +665,7 @@ program
         event,
       });
       recordDigest(prior, event!.program, rep, event!.changed.bytecode);
-      if (opts.state) await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
+      if (opts.state) await savePrior(opts.state, prior);
       const alarm = maliceAlarm(rep);
       process.stdout.write(
         `${eventName} ${rep.tier} (score ${rep.score}, ${rep.confidence}) danger=${rep.danger ? `${rep.danger.category} ${rep.danger.score}/100` : 'not scored'}${alarm.suffix} ${rep.label ?? rep.program} — stopped at ${rep.stoppedAt}, ${rep.budget.spent.rpcCalls} RPC, ${rep.blastRadius?.directCallers ?? 'n/a'} dependents\n`,
@@ -980,10 +979,6 @@ async function measureTxnBytes(client: SolanaClient): Promise<number | null> {
 
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
-}
-
-function priorToObj(m: Map<string, PriorDigest>): Record<string, PriorDigest> {
-  return Object.fromEntries(m.entries());
 }
 
 async function emit(report: DotReport, opts: { format: string; out?: string }): Promise<void> {

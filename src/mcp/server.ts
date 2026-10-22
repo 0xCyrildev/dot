@@ -18,6 +18,7 @@ import { LIMIT_STATUS, auditCoverage, countStates, verifyTestClaims, type LimitS
 import { isWellFormedPubkey } from '../ids.js';
 import { isDotError } from '../errors.js';
 import type { WatchStatus } from '../watcher/watcher.js';
+import { loadPrior } from '../state/priorStore.js';
 
 const DEFAULT_RPC = 'https://api.mainnet-beta.solana.com';
 
@@ -57,7 +58,16 @@ const eventSchema = z
 
 type ToolArgs = z.infer<typeof toolSchema>;
 
-function makeScout(opts: ToolArgs, mode: 'rules' | 'real') {
+/**
+ * `DOT_STATE_FILE` is what makes CRITICAL reachable over MCP at all. Without a prior digest the
+ * behavioural axis has no data, an unmeasured queue axis withholds the top band, and every MCP answer is
+ * capped one category below what the same program scores from the CLI — a limit of the transport, not of
+ * the program, and easy to misread as the tool being timid. The file is read only: an MCP server that
+ * wrote state would be writing to a path chosen by whatever process called it.
+ */
+async function makeScout(opts: ToolArgs, mode: 'rules' | 'real') {
+  const stateFile = process.env.DOT_STATE_FILE;
+  const prior = stateFile ? await loadPrior(stateFile) : null;
   const budget = new Budget(opts.budget);
   const transport = new HttpTransport(opts.rpc ?? process.env.DOT_RPC_URL ?? DEFAULT_RPC);
   const client = new SolanaClient({ transport, budget, commitment: opts.commitment });
@@ -70,6 +80,7 @@ function makeScout(opts: ToolArgs, mode: 'rules' | 'real') {
     decision,
     mode,
     ...(opts.knownMultisigs.length > 0 ? { knownMultisigs: opts.knownMultisigs } : {}),
+    ...(prior && prior.size > 0 ? { prior, stateFileUsed: true } : {}),
     idlResolver: (p) =>
       resolveIdl(
         p,
@@ -161,7 +172,7 @@ export function buildServer(opts: McpOptions): McpServer {
     },
     async (args) => {
       if (!isWellFormedPubkey(args.program)) return errorResult(`${args.program} is not a 32-byte base58 address`);
-      const { scout } = makeScout(args, mode);
+      const { scout } = await makeScout(args, mode);
       try {
         const report = await scout.run({ program: args.program, forceFullTrace: args.forceFullTrace });
         return reportContent(report, args.format, {});
@@ -183,7 +194,7 @@ export function buildServer(opts: McpOptions): McpServer {
     },
     async (args) => {
       if (!isWellFormedPubkey(args.program)) return errorResult(`${args.program} is not a 32-byte base58 address`);
-      const { scout } = makeScout(args, mode);
+      const { scout } = await makeScout(args, mode);
       const ev = args.event
         ? {
             kind: args.event.kind,

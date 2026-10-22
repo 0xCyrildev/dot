@@ -399,7 +399,12 @@ Two tools, so another agent can call Dot instead of reimplementing the fold:
 
 ```bash
 dot mcp        # stdio
+DOT_STATE_FILE=~/.dot/state.json dot mcp   # also reads Dot's prior digests
 ```
+
+An MCP run has no `--state`, so the behavioural axis is unmeasured and the ceiling rule withholds
+CRITICAL — a limit of the transport, not of the program. Point `DOT_STATE_FILE` at a state file written by
+`dot watch` and the axis becomes measurable. The server reads that file and never writes it.
 
 Four tools, all requiring a `budget` argument so an orchestrator cannot ask for an unbounded scan by
 accident:

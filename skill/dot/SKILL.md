@@ -109,7 +109,11 @@ integrity axis, labelled as an assumption),
 **mixer provenance** (this build ships no mixer list, so `--suspect` is the only route to that band),
 **proximity to an ecosystem event** (no feed exists, so that +10 has never been awarded), and routed
 **token value** (the graph records which mints were touched, never how much, so the ×2 multiplier is
-lamports-only). The axes sum to 180 and the score clamps to 100: keep `rawScore` in view, because
+lamports-only). Over MCP there is no `--state`, so the behavioural axis is unmeasured and CRITICAL is
+withheld by the ceiling: set `DOT_STATE_FILE` (read-only) to make that axis measurable. The axes sum
+to 180 and the score clamps to 100, and when the clamp bites the scream says so — "raw 155/180 before
+the clamp" — because 100/100 in an accusation is the one number a reader will otherwise take as a
+measurement. Keep `rawScore` in view, because
 100/100 can mean "several axes maxed out" or "the arithmetic ran out of room", and those are different
 facts about the program.
 

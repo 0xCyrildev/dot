@@ -731,8 +731,12 @@ export function scoreDanger(i: DangerInputs): DangerAssessment {
   if (anomaly.points !== null && anomaly.points > 0) evidenceParts.push(`Code anomaly ${anomaly.points}/${anomaly.max}: ${anomaly.detail.join('; ')}.`);
   if (timing.points !== null && timing.points > 0) evidenceParts.push(`Timing ${timing.points}/${timing.max}: ${timing.detail.join('; ')}.`);
   const unmeasured = signatureAxes.filter((a) => a.points === null).map((a) => a.id);
+  // When the clamp bit, say so inside the accusation: "Score: 100/100" is the one number a reader
+  // is most likely to take as a measurement, and here it is arithmetic — three axes maxed out and the
+  // ceiling reached, which rawScore is the only figure that shows.
+  const clampNote = rawScore > 100 ? ` (raw ${rawScore}/180 before the clamp)` : '';
   const evidence = flagged
-    ? `${evidenceParts.join(' ')}${unmeasured.length ? ` Not measured: ${unmeasured.join(', ')}.` : ''} Score: ${score}/100.`
+    ? `${evidenceParts.join(' ')}${unmeasured.length ? ` Not measured: ${unmeasured.join(', ')}.` : ''} Score: ${score}/100${clampNote}.`
     : measured
       ? `Signature axes total ${maliceScore}/${AXIS_MAX.authorityIntegrity + AXIS_MAX.codeAnomaly + AXIS_MAX.timingAnomaly}; the gate needs the overall score at or above ${MALICE_TOTAL_SCORE_GATE}${authorityIntegrityPositive ? '' : ' with a non-zero authority-integrity axis'}.`
       : 'No malice signature axis was measurable on this run, so the heuristic reports nothing — which is not a clean result.';
