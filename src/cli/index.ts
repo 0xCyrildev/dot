@@ -70,6 +70,12 @@ type GlobalOpts = {
   solUsd?: string;
   /** `--state`: the file Dot's own memory of past upgrades lives in. */
   state?: string;
+  checkFunding?: boolean;
+  suspect?: string[];
+  governanceProgram?: string;
+  incidentAt?: string;
+  threshold?: string;
+  timelock?: boolean;
   mode: string;
   budgetRpc: string;
   budgetTokens: string;
@@ -115,6 +121,69 @@ async function readIdlPair(now?: string, prior?: string): Promise<{ now: unknown
     }
   };
   return { now: await load(now), prior: await load(prior) };
+}
+
+/**
+ * `--threshold 2-of-3`. A multisig's quorum lives inside the multisig account, which Dot does not
+ * decode, so the only way this number reaches a report is an operator declaring it. Anything that
+ * does not parse is refused loudly rather than defaulted: a guessed threshold is a guessed accusation.
+ */
+export function parseThreshold(value: string): { m: number; n: number } {
+  const hit = /^(\d+)\s*(?:-?of|-)\s*(\d+)$/i.exec(value.trim());
+  if (!hit) throw new Error(`--threshold wants "m-of-n" (e.g. 2-of-3), got "${value}"`);
+  const m = Number(hit[1]);
+  const n = Number(hit[2]);
+  if (!(m >= 1 && n >= m && n <= 11)) throw new Error(`--threshold "${value}" is not a valid Ed25519 multisig (need 1 <= m <= n <= 11)`);
+  return { m, n };
+}
+
+/** `--incident-at 2026-10-22T09:00Z`, or a unix time. Operator-declared: Dot fetches no incident feed,
+ *  so an upgrade is never "near an incident" unless somebody says when one happened. */
+export function parseIncidentAt(value: string): number {
+  const v = value.trim();
+  if (/^\d{9,13}$/.test(v)) {
+    const n = Number(v);
+    return n < 1e11 ? n * 1000 : n;
+  }
+  const t = Date.parse(v);
+  if (Number.isNaN(t)) throw new Error(`--incident-at wants an ISO timestamp or a unix time, got "${v}"`);
+  return t;
+}
+
+/**
+ * Record what a watch tick learned about one program. `upgradesAt` grows only when the event said the
+ * **bytecode** changed: Dot's own observation times are the cadence basis for the danger ranking's
+ * timing axis, so filling it with authority changes or baseline sightings would teach the axis a
+ * rhythm the program never had. `analyze` does not append it at all — a one-off run cannot tell an
+ * upgrade from a steady state, and an axis that silently measures "times I was run" is worse than one
+ * that reports itself unmeasured.
+ */
+function recordDigest(
+  prior: Map<string, import('../agent/scout.js').PriorDigest>,
+  program: string,
+  rep: { blastRadius?: { directCallers?: number; lamportsRouted?: number } | null; tier: string },
+  bytecodeChanged: boolean,
+): void {
+  const now = Date.now();
+  const earlier = prior.get(program)?.upgradesAt ?? [];
+  prior.set(program, {
+    at: now,
+    knownDependents: rep.blastRadius?.directCallers ?? 0,
+    lamportsRouted: rep.blastRadius?.lamportsRouted ?? 0,
+    tier: rep.tier,
+    upgradesAt: bytecodeChanged ? [...earlier, now].slice(-32) : earlier,
+  });
+}
+
+/**
+ * The watch summary line is the only thing an operator reads while a stream runs, so the scream belongs
+ * in it and not only in the markdown `emit` writes underneath. Both parts print nothing unless the gate
+ * fired: a CRITICAL that was *not* flagged must not borrow the alarm, and `danger=` already carries the
+ * queue position.
+ */
+export function maliceAlarm(rep: DotReport): { suffix: string; line: string | null } {
+  const m = rep.danger?.malice;
+  return m?.flagged ? { suffix: ' SUSPECTED_MALICIOUS', line: m.verdictLine } : { suffix: '', line: null };
 }
 
 async function build(o: GlobalOpts & BuildExtras) {
@@ -169,6 +238,12 @@ async function build(o: GlobalOpts & BuildExtras) {
     usdPerSol: o.solUsd ? Number(o.solUsd) : null,
     ...(o.prior ? { prior: o.prior } : {}),
     stateFileUsed: Boolean(o.state),
+    ...(o.checkFunding ? { checkFunding: true } : {}),
+    ...(o.suspect?.length ? { suspectAddresses: o.suspect } : {}),
+    ...(o.governanceProgram ? { governanceProgram: o.governanceProgram } : {}),
+    ...(o.incidentAt ? { incidentAtMs: parseIncidentAt(o.incidentAt) } : {}),
+    ...(o.threshold ? { declaredThreshold: parseThreshold(o.threshold) } : {}),
+    ...(o.timelock ? { timelockDeclared: true } : {}),
     maxDepth: Number(o.depth),
     ...(o.bytecode ? { bytecode: o.bytecode } : {}),
     ...(o.recordBytecode ? { recordBytecode: o.recordBytecode } : {}),
@@ -207,6 +282,12 @@ program
   .option('--cost-model <file>', 'calibration JSON from `dot calibrate` (or set DOT_COST_MODEL to pin one for every run)')
   .option('--depth <n>', 'transitive dependent hops to report', '3')
   .option('--sol-usd <price>', 'operator-supplied SOL price; Dot has no price oracle and will not invent a USD figure')
+  .option('--check-funding', "spend a few extra RPC calls on the upgrade authority's own funding history (malice signature: authority integrity)")
+  .option('--suspect <address>', 'an address whose transfers to the authority should be flagged (repeatable). Dot ships no mixer list, so without this the flagged-source band is unreachable', collect, [])
+  .option('--governance-program <address>', 'a governance program whose recent activity the upgrade is timed against')
+  .option('--incident-at <time>', 'declare an incident timestamp (ISO or unix) to measure the upgrade against; Dot has no incident feed')
+  .option('--threshold <m-of-n>', 'declare a multisig threshold (e.g. 2-of-3); Dot cannot read it from the authority account')
+  .option('--timelock', 'declare that the authority is behind a timelock; nothing on-chain reports one')
   .option('--seeds <file>', 'JSON list of {program_id, seed_template, account_type} to sum custody from derived PDAs')
   .option('--bytecode-vault <dir>', 'directory where Dot keeps images it has seen, to diff against on the next upgrade')
   .option('--prior-bytecode <file>', 'explicit prior image, when the vault has none')
@@ -274,11 +355,14 @@ program
       throw e;
     }
     if (opts.state) {
+      // Deliberately not `recordDigest`: analyze cannot tell "this program just upgraded" from
+      // "somebody ran the tool", and the timing axis would inherit a cadence made of invocations.
       prior.set(programId, {
         at: Date.now(),
         knownDependents: report.blastRadius?.directCallers ?? 0,
         lamportsRouted: report.blastRadius?.lamportsRouted ?? 0,
         tier: report.tier,
+        upgradesAt: prior.get(programId)?.upgradesAt,
       });
       await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
     }
@@ -408,6 +492,12 @@ program
           maxDepth: Number(opts.depth),
           usdPerSol: opts.solUsd ? Number(opts.solUsd) : null,
           stateFileUsed: Boolean(opts.state),
+          ...(opts.checkFunding ? { checkFunding: true } : {}),
+          ...(opts.suspect?.length ? { suspectAddresses: opts.suspect } : {}),
+          ...(opts.governanceProgram ? { governanceProgram: opts.governanceProgram } : {}),
+          ...(opts.incidentAt ? { incidentAtMs: parseIncidentAt(opts.incidentAt) } : {}),
+          ...(opts.threshold ? { declaredThreshold: parseThreshold(opts.threshold) } : {}),
+          ...(opts.timelock ? { timelockDeclared: true } : {}),
           ...(secondary
             ? {
                 resilient: {
@@ -428,16 +518,14 @@ program
             : {}),
         });
         const rep = await analysisScout.run({ program: event.program, event });
-        prior.set(event.program, {
-          at: Date.now(),
-          knownDependents: rep.blastRadius?.directCallers ?? 0,
-          lamportsRouted: rep.blastRadius?.lamportsRouted ?? 0,
-          tier: rep.tier,
-        });
+        recordDigest(prior, event.program, rep, event.changed.bytecode);
+
         if (opts.state) await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
+        const alarm = maliceAlarm(rep);
         process.stdout.write(
-          `${rep.tier}${rep.tierSource === 'integrity' ? ' [integrity]' : ''} score=${rep.score} conf=${rep.confidence} danger=${rep.danger ? `${rep.danger.category}/${rep.danger.score}` : 'n/a'} stopped=${rep.stoppedAt} rpc=${rep.budget.spent.rpcCalls} deps=${rep.blastRadius?.directCallers ?? 'n/a'} ${rep.program}\n`,
+          `${rep.tier}${rep.tierSource === 'integrity' ? ' [integrity]' : ''} score=${rep.score} conf=${rep.confidence} danger=${rep.danger ? `${rep.danger.category}/${rep.danger.score}` : 'n/a'} stopped=${rep.stoppedAt} rpc=${rep.budget.spent.rpcCalls} deps=${rep.blastRadius?.directCallers ?? 'n/a'} ${rep.program}${alarm.suffix}\n`,
         );
+        if (alarm.line) process.stdout.write(`${alarm.line}\n`);
         await emit(rep, opts);
         return { program: event.program, tier: rep.tier, stoppedAt: rep.stoppedAt, rpcCalls: rep.budget.spent.rpcCalls };
       };
@@ -574,6 +662,12 @@ program
         maxDepth: Number(opts.depth),
         usdPerSol: opts.solUsd ? Number(opts.solUsd) : null,
         stateFileUsed: Boolean(opts.state),
+        ...(opts.checkFunding ? { checkFunding: true } : {}),
+        ...(opts.suspect?.length ? { suspectAddresses: opts.suspect } : {}),
+        ...(opts.governanceProgram ? { governanceProgram: opts.governanceProgram } : {}),
+        ...(opts.incidentAt ? { incidentAtMs: parseIncidentAt(opts.incidentAt) } : {}),
+        ...(opts.threshold ? { declaredThreshold: parseThreshold(opts.threshold) } : {}),
+        ...(opts.timelock ? { timelockDeclared: true } : {}),
         ...(perUpgrade.limits.maxRpcCalls > 20 && opts.ingest !== 'signatures'
           ? { batcher: new BlockBatcher(perEventClient, costModel, perUpgrade), ingest: opts.ingest as 'auto' | 'blocks' | 'signatures' }
           : {}),
@@ -603,16 +697,13 @@ program
         ...(targets.find((t) => t.program === event!.program)?.label ? { label: targets.find((t) => t.program === event!.program)!.label } : {}),
         event,
       });
-      prior.set(event!.program, {
-        at: Date.now(),
-        knownDependents: rep.blastRadius?.directCallers ?? 0,
-        lamportsRouted: rep.blastRadius?.lamportsRouted ?? 0,
-        tier: rep.tier,
-      });
+      recordDigest(prior, event!.program, rep, event!.changed.bytecode);
       if (opts.state) await writeFile(opts.state, JSON.stringify(priorToObj(prior), null, 2));
+      const alarm = maliceAlarm(rep);
       process.stdout.write(
-        `${eventName} ${rep.tier} (score ${rep.score}, ${rep.confidence}) danger=${rep.danger ? `${rep.danger.category} ${rep.danger.score}/100` : 'not scored'} ${rep.label ?? rep.program} — stopped at ${rep.stoppedAt}, ${rep.budget.spent.rpcCalls} RPC, ${rep.blastRadius?.directCallers ?? 'n/a'} dependents\n`,
+        `${eventName} ${rep.tier} (score ${rep.score}, ${rep.confidence}) danger=${rep.danger ? `${rep.danger.category} ${rep.danger.score}/100` : 'not scored'}${alarm.suffix} ${rep.label ?? rep.program} — stopped at ${rep.stoppedAt}, ${rep.budget.spent.rpcCalls} RPC, ${rep.blastRadius?.directCallers ?? 'n/a'} dependents\n`,
       );
+      if (alarm.line) process.stdout.write(`${alarm.line}\n`);
       await emit(rep, opts);
     };
 

@@ -8,6 +8,7 @@ import { HttpTransport } from '../src/rpc/transport.js';
 import { SolanaClient } from '../src/rpc/client.js';
 import { BPF_LOADER_UPGRADEABLE } from '../src/ids.js';
 import { formatEscalation, renderMarkdown } from '../src/report.js';
+import type { UpgradeEvent } from '../src/watcher/watcher.js';
 import { FakeTransport, txFixture } from './helpers.js';
 
 const TARGET = '5PjDJaGfSPJj4tFzMRCiuuAasKg5n8dJKXKenhuwZexx';
@@ -37,7 +38,7 @@ function stack(routes: Parameters<typeof FakeTransport.prototype.route>[0][]) {
 function makeScout(
   transport: FakeTransport,
   budget: Budget,
-  opts: Partial<{ prior: Map<string, { at: number; knownDependents: number; lamportsRouted: number; tier: string }>; multisigs: string[]; usdPerSol: number; stateFileUsed: boolean }> = {},
+  opts: Partial<{ prior: Map<string, { at: number; knownDependents: number; lamportsRouted: number; tier: string }>; multisigs: string[]; usdPerSol: number; stateFileUsed: boolean; governanceProgram: string; checkFunding: boolean; suspectAddresses: string[] }> = {},
 ) {
   const client = new SolanaClient({ transport, budget, commitment: 'finalized' });
   return new Scout({
@@ -49,6 +50,9 @@ function makeScout(
     ...(opts.prior ? { prior: opts.prior } : {}),
     ...(opts.usdPerSol !== undefined ? { usdPerSol: opts.usdPerSol } : {}),
     ...(opts.stateFileUsed !== undefined ? { stateFileUsed: opts.stateFileUsed } : {}),
+    ...(opts.governanceProgram ? { governanceProgram: opts.governanceProgram } : {}),
+    ...(opts.checkFunding ? { checkFunding: true } : {}),
+    ...(opts.suspectAddresses ? { suspectAddresses: opts.suspectAddresses } : {}),
   });
 }
 
@@ -376,7 +380,12 @@ describe('Scout: the Upgrade Danger Ranking rides the same report', () => {
     const md = renderMarkdown(report);
     expect(md).toContain('## Upgrade danger ranking');
     expect(md).toContain('UPGRADE DANGER RANKING:');
-    expect(md).toContain('└── Behavior:');
+    expect(md).toContain('├── Behavior:');
+    // The three signature axes ride along even when nothing probed them, labelled as unassessed —
+    // their absence from the tree would read as "checked and clean".
+    expect(md).toContain('├── Authority Integrity:');
+    expect(md).toContain('├── Code Anomaly:');
+    expect(md).toContain('└── Timing Anomaly:');
   });
 
   it('reads a declared multisig authority as 25 with the threshold gap stated', async () => {
@@ -405,5 +414,68 @@ describe('Scout: the Upgrade Danger Ranking rides the same report', () => {
     const label = axisOf(report.danger!, 'blastRadius').label;
     expect(label).toMatch(/routing 0 lamports/);
     expect(label).not.toMatch(/\$/);
+  });
+
+  // The timing axis is the one malice signature whose answer changes with the question "when?", and the
+  // first wiring answered it with the operator's clock. These two tests are the difference.
+  const GOV = 'G1ovProgTxXz2rBfbvH4sF7fjXvPjqKTXf3gDvXvjfb';
+  const govActiveNowRoute = () => ({
+    match: (m: string, p: unknown[]) => m === 'getSignaturesForAddress' && p[0] === GOV,
+    result: [{ signature: 'gov0', slot: 400_000_900, err: null, memo: null, blockTime: Math.floor(Date.now() / 1000) - 60, confirmationStatus: 'finalized' }],
+  });
+
+  it('measures governance proximity against the upgrade, not against the moment Dot was run', async () => {
+    // Regression: comparing the governance program's *current* signatures to Date.now() awarded +10 to
+    // every historical `analyze` of any program whose sampled activity is old, against a busy
+    // governance program. The reference is now the newest sampled transaction, so a 2025 upgrade and a
+    // governance call from a minute ago are a year apart and score nothing.
+    const { transport, budget } = stack([govActiveNowRoute(), accountRoute(AUTH), sigsRoute(2), txRoute(txFixture('tx-depth3'))]);
+    const report = await makeScout(transport, budget, { governanceProgram: GOV }).run({ program: TARGET });
+    const a = axisOf(report.danger!, 'timingAnomaly');
+    expect(a.points).toBe(0);
+    expect(a.notAssessed.join(' ')).toMatch(/outside the 1-hour band/);
+    expect(a.detail.join(' ')).not.toMatch(/\+10/);
+  });
+
+  it('awards the +10 when a watcher saw the change minutes after governance moved, and names its clock', async () => {
+    const { transport, budget } = stack([govActiveNowRoute(), accountRoute(AUTH), sigsRoute(2), txRoute(txFixture('tx-depth3'))]);
+    const event = {
+      kind: 'upgrade',
+      program: TARGET,
+      programData: 'HZcJwcJ2njPDxZtpPoKnF8v2w9QAx2rS7TdJPSRkbEhu',
+      before: null,
+      after: null,
+      changed: { bytecode: true, authority: false, size: false },
+      detectedAt: Date.now(),
+      source: 'poll',
+    } satisfies UpgradeEvent;
+    const report = await makeScout(transport, budget, { governanceProgram: GOV }).run({ program: TARGET, event });
+    const a = axisOf(report.danger!, 'timingAnomaly');
+    expect(a.points).toBe(10);
+    expect(a.detail.join(' ')).toMatch(/minute\(s\) from this upgrade/);
+    expect(a.detail.join(' ')).not.toMatch(/Dot's own clock/);
+    expect(a.notAssessed.join(' ')).toMatch(/cannot tell a governance \*proposal\*/);
+  });
+
+  it('pays for the funding probe only when asked, and records what it refused', async () => {
+    const refused = new FakeTransport();
+    refused.route(accountRoute(AUTH));
+    refused.route({ match: (m: string) => m === 'getSignaturesForAddress', error: { code: -32006, message: 'Transaction history is not available' } });
+    refused.route(sigsRoute(2));
+    refused.route(txRoute(txFixture('tx-depth3')));
+    const report = await makeScout(refused, new Budget({ maxRpcCalls: 500, maxSignatures: 500 }), { checkFunding: true }).run({ program: TARGET });
+    const a = axisOf(report.danger!, 'authorityIntegrity');
+    expect(a.points).toBe(20);
+    expect(a.notAssessed.join(' ')).toMatch(/An unverified authority is not a verified one/);
+    expect(report.evidence.map((e) => e.summary).join(' ')).toMatch(/authority funding unverified/);
+    // No suspect list was supplied, so the +30 band was unreachable before the node even refused.
+    expect(a.notAssessed.join(' ')).toMatch(/unreachable by construction/);
+
+    const untouched = await makeScout(new FakeTransport([
+      accountRoute(AUTH),
+      sigsRoute(2),
+      txRoute(txFixture('tx-depth3')),
+    ]), new Budget({ maxRpcCalls: 500, maxSignatures: 500 })).run({ program: TARGET });
+    expect(axisOf(untouched.danger!, 'authorityIntegrity').notAssessed.join(' ')).toMatch(/funding was not probed/);
   });
 });

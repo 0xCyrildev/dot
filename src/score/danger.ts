@@ -22,13 +22,55 @@ import type { DiffConfidence } from '../state/bytecodeDiff.js';
  *    says so; (b) "upgrade within 24h of a major ecosystem event" has no feed in Dot at all, so
  *    it is never awarded; (c) routed *token* value is not attributable — the graph records which
  *    mints were touched, not how much — so the >10M multiplier applies to observed lamports only.
- * 3. **The axes sum to 120, not 100** (40 + 30 + 30 + 20). The total is clamped at 100 and
- *    `rawScore` is kept next to it, because a reader who sees 100/100 should be able to tell that
- *    several axes were maxed out and the ceiling is arithmetic, not evidence.
+ * 3. **The axes sum to 180, not 100** (40 + 30 + 30 + 20 queue-position axes, plus 30 + 20 + 10
+ *    malice-signature axes). The total is clamped at 100 and `rawScore` is kept next to it, because a
+ *    reader who sees 100/100 should be able to tell that several axes were maxed out and the ceiling is
+ *    arithmetic, not evidence.
+ *
+ * The three malice axes are named *signature* axes on purpose. Dot does not classify intent —
+ * `NO_MALICE_DETECTION` says so and still does. What it can now do is notice that a program is being
+ * upgraded by a key whose funding is minutes old and whose new bytecode answers to a selector the
+ * published interface denies, and shout. The shout is a routing decision with a written-down reason,
+ * not a verdict about a person: an honest team with a fresh ops wallet and a stale IDL will trigger it,
+ * and the output says that in the same breath as it says `SUSPECTED_MALICIOUS`.
+ *
+ * Two overlaps are deliberate and are printed rather than hidden, because a reviewer adding up the
+ * axes will otherwise find the same fact charged twice: an `unscannable` image costs 5 points in
+ * `codeDelta` (you cannot verify a change) and 10 more in `codeAnomaly` (you cannot rule one out);
+ * and `behavior` measures "is this the first upgrade Dot has seen" while `timingAnomaly` measures
+ * "does when it happened fit the program's own cadence" — related, not the same question.
  */
 
 export type DangerCategory = 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW';
-export type DangerAxisId = 'authority' | 'codeDelta' | 'blastRadius' | 'behavior';
+export type DangerAxisId =
+  | 'authority'
+  | 'codeDelta'
+  | 'blastRadius'
+  | 'behavior'
+  | 'authorityIntegrity'
+  | 'codeAnomaly'
+  | 'timingAnomaly';
+
+/** The malice-signature axes, as opposed to the four queue-position axes. */
+export const MALICE_AXES = ['authorityIntegrity', 'codeAnomaly', 'timingAnomaly'] as const satisfies readonly DangerAxisId[];
+
+/**
+ * What the funding probe actually established about the upgrade authority. The states are ordered by
+ * how much they are worth accusing anyone of, and `unverified` is a state a *refusal* puts you in —
+ * never a clean bill.
+ */
+export type FundingEvidence =
+  | { state: 'flagged_source'; detail: string; fromAddress: string }
+  | {
+      state: 'recent_funding_observed';
+      detail: string;
+      ageMs: number;
+      /** True when the node's retention could be hiding earlier history, which is what makes the
+       *  wallet look freshly created. Freshness is then *apparent*, and the +30 is not awarded. */
+      retentionBounded: boolean;
+    }
+  | { state: 'established'; detail: string }
+  | { state: 'unverified'; detail: string };
 
 export type DangerAxis = {
   id: DangerAxisId;
@@ -41,6 +83,19 @@ export type DangerAxis = {
   detail: string[];
   /** Why this is `null`, or why a sub-claim inside the axis was not scored. */
   notAssessed: string[];
+};
+
+/**
+ * Where the clock on the timing axis came from, in decreasing order of how much it is worth.
+ * `analysis-clock` is the honest label for "Dot did not know when this upgrade happened, and is
+ * measuring against the moment somebody ran the tool".
+ */
+export type TimingReference = 'watcher-detected' | 'newest-observed-trace' | 'analysis-clock';
+
+export const TIMING_REFERENCE_NOTE: Record<TimingReference, string> = {
+  'watcher-detected': 'the moment the watcher saw the account change, which is within one poll interval of the upgrade transaction',
+  'newest-observed-trace': 'the block time of the newest transaction Dot sampled for this program, not the upgrade transaction itself',
+  'analysis-clock': "Dot's own clock: this run had no upgrade timestamp, so proximity here is proximity to *now*, not to the upgrade",
 };
 
 export type DangerInputs = {
@@ -56,7 +111,7 @@ export type DangerInputs = {
     addedEntrypoints: string[];
     undeclaredEntrypoints: string[];
     /** Instructions whose account set gained a signer or a writable non-signer. */
-    accountChanges: Array<{ instruction: string; addedSigner: string[]; addedWritable: string[] }>;
+    accountChanges: Array<{ instruction: string; addedSigner: string[]; addedWritable: string[]; existing: boolean }>;
   } | null;
   /** From the dependency graph. Null when the run never built one. */
   radius: {
@@ -75,9 +130,67 @@ export type DangerInputs = {
     /** True when `--state` was not supplied, so "no prior digest" carries no information at all. */
     stateFileUsed: boolean;
   } | null;
+  /**
+   * Malice signature 1 — where the authority's money came from. Null when the probe was never run,
+   * which is the default: it costs RPC calls, so `dot analyze` only pays for it when asked
+   * (`--check-funding`), and an operator's suspect-address list is the only source of the
+   * `flagged_source` state because Dot ships no such list of its own.
+   */
+  integrity: {
+    funding: FundingEvidence | null;
+    /**
+     * A multisig's `m` of `n` cannot be read by Dot — the threshold lives inside the multisig
+     * account, which Dot does not decode. An operator who knows it can declare it; without a
+     * declaration this axis is unmeasured for a multisig and never guesses.
+     */
+    declaredThreshold: { m: number; n: number } | null;
+    /** Operator-declared timelock on the authority. The brief's 0-point case needs one, and it is not on-chain. */
+    timelockDeclared: boolean;
+    /** How the funding evidence was obtained, for the reader's trust calibration. */
+    fundingProbe: { callsSpent: number; signaturesSeen: number } | null;
+    /**
+     * How many suspect funding sources the operator named. Omitted or 0 means the `flagged_source` band
+     * was unreachable *by construction* — Dot ships no mixer or obfuscation list of its own — so
+     * "clean" here can only ever mean "no fresh funding observed", never "not funded by a mixer". The
+     * default is the pessimistic reading, which is the only safe default for an optional field.
+     */
+    suspectAddressesSeen?: number;
+  } | null;
+  /** Malice signature 3 — when this upgrade happened relative to this program's own history. */
+  timing: {
+    /** Unix ms of upgrades Dot has observed for this program before this one. */
+    priorUpgradeTimesMs: number[];
+    /** Unix ms of this upgrade, measured against whatever `upgradeTimeSource` names. */
+    upgradeTimeMs: number | null;
+    /**
+     * What the clock behind `upgradeTimeMs` and the two gaps actually is. This is not decoration: the
+     * brief asks whether *the upgrade* happened within an hour of a governance proposal, and a run of
+     * `dot analyze` on a program that last moved a year ago has no upgrade timestamp of its own. If the
+     * only clock available is "when Dot was run", the axis says so, because comparing a year-old
+     * upgrade to a governance program's *current* activity would otherwise print a +10 that means
+     * "this analysis happened recently" and nothing else.
+     */
+    upgradeTimeSource?: TimingReference;
+    /**
+     * Distance in ms to the nearest signature on an operator-supplied governance program, when one
+     * was supplied. Null when no governance program was named: "near a governance proposal" is then
+     * not a false alarm, it is not measured at all.
+     */
+    governanceGapMs: number | null;
+    /** Distance in ms to an operator-declared incident window. Dot has no incident feed. */
+    incidentGapMs: number | null;
+  } | null;
 };
 
-const AXIS_MAX: Record<DangerAxisId, number> = { authority: 40, codeDelta: 30, blastRadius: 30, behavior: 20 };
+const AXIS_MAX: Record<DangerAxisId, number> = {
+  authority: 40,
+  codeDelta: 30,
+  blastRadius: 30,
+  behavior: 20,
+  authorityIntegrity: 30,
+  codeAnomaly: 20,
+  timingAnomaly: 10,
+};
 
 /** Above this many lamports routed through the dependents, the blast-radius axis doubles. */
 const VALUE_MULTIPLIER_FLOOR_LAMPORTS = 10_000_000;
@@ -108,6 +221,36 @@ export type DangerAssessment = {
   /** Raw total of the axes that *were* scored, over the max of those axes only. */
   coverage: { scored: number; possible: number };
   verdict: string;
+  /** The malice heuristic's own verdict, separate from `category` so a queue position and an
+   *  accusation can never be confused for one number. */
+  malice: MaliceAssessment;
+};
+
+export type MaliceAssessment = {
+  /** True only when the gate below is fully satisfied. A routing scream, not a finding. */
+  flagged: boolean;
+  /**
+   * The sentence the brief specifies, verbatim, emitted only when `flagged`. It is a constant rather
+   * than a template so the ranking block, the markdown banner and the watch line cannot drift into
+   * three slightly different alarms — and so `SUSPECTED_MALICIOUS` can only ever be printed by the
+   * gate that decided it, never by a caller formatting its own guess.
+   */
+  verdictLine: string | null;
+  /** Sum of the three signature axes in their own units, max 60. */
+  maliceScore: number;
+  gate: {
+    /** The threshold the brief sets on the *overall* danger score. */
+    totalScoreAtLeast: number;
+    totalScore: number;
+    authorityIntegrityPositive: boolean;
+    /** Positive evidence of one of the two kinds Dot can observe, not merely an unmeasured risk. */
+    positiveEvidence: boolean;
+    /** False when the signature axes were never measured — then the flag is not "off", it is unknown. */
+    measured: boolean;
+  };
+  /** One sentence of evidence, built only from observed facts. */
+  evidence: string;
+  disclaimer: string;
 };
 
 export function categoryFor(score: number): DangerCategory {
@@ -228,6 +371,198 @@ function behaviorAxis(b: NonNullable<DangerInputs['behavior']>): DangerAxis {
   };
 }
 
+/**
+ * Malice signature 1 — authority integrity (0–30).
+ *
+ * The bands come from the brief. What matters here is what they are *allowed* to stand on: the +30
+ * needs observed funding evidence, either an inbound transfer from an address an operator named, or a
+ * funding transaction seen at the very start of a wallet's history. A refusal, a retention-limited
+ * walk, or a probe that never ran scores the authority as an ordinary single key (20) and says which
+ * of those it was — a missing check is not a clean check, and it is not evidence either.
+ */
+function integrityAxis(i: NonNullable<DangerInputs['integrity']>, posture: AuthorityPosture): DangerAxis {
+  const max = AXIS_MAX.authorityIntegrity;
+  const mk = (points: number | null, label: string, detail: string[], notAssessed: string[]): DangerAxis => ({
+    id: 'authorityIntegrity',
+    points,
+    max,
+    label,
+    detail,
+    notAssessed,
+  });
+
+  if (posture === 'renounced') {
+    return mk(0, 'immutable (authority renounced)', ['0: no key can author a further upgrade, so no funding history is relevant'], []);
+  }
+
+  if (posture === 'multisig') {
+    // Two parts of the brief's +10 band that this build cannot see, whichever threshold ends up being
+    // used. A signer set that has not rotated in two years is a real signal, and "which signals are
+    // missing from a multisig" is exactly the question a reader should not have to infer.
+    const gaps: string[] = [
+      'stale signer set: the brief puts it in the same +10 band as a 2-of-3, and Dot cannot evaluate it — that needs the age of each signer\'s last activity, which is a read this axis does not make',
+    ];
+    if (i.funding) {
+      gaps.push(`funding evidence was collected (${i.funding.state}) and is deliberately not scored here: the brief\'s top band is a *single EOA* funded from a suspect source, and a multisig is not that. Read the evidence ledger line — it is still worth knowing even though no axis credits it`);
+    }
+    if (!i.declaredThreshold) {
+      return mk(null, 'multisig authority, threshold unread', [], [
+        'the brief\'s low-threshold band (10 for a 2-of-3 or a stale signer set) cannot be evaluated: `m` of `n` lives inside the multisig account, which Dot does not decode. Guessing it would manufacture the accusation rather than observe it',
+        ...gaps,
+      ]);
+    }
+    const { m, n } = i.declaredThreshold;
+    const low = m <= 2;
+    if (!low && i.timelockDeclared) {
+      return mk(0, `high-threshold multisig (${m}-of-${n}) behind a declared timelock`, ['0: the brief\'s 0-point case, and the only case where a timelock was declared — Dot cannot read one from chain data'], gaps);
+    }
+    if (low) {
+      return mk(10, `low-threshold multisig (${m}-of-${n})`, [`+10: ${m} signatures move this program, and ${m} is 2 or fewer`], [...(i.timelockDeclared ? [] : ['no timelock declared, so the 0-point "high threshold with timelock" case does not apply']), ...gaps]);
+    }
+    return mk(10, `multisig (${m}-of-${n}), no timelock`, ['+10: the brief\'s 0-point case requires a timelock as well as a high threshold, and none was declared'], gaps);
+  }
+
+  if (posture === 'program_derived' || posture === 'unknown') {
+    return mk(null, posture === 'unknown' ? 'authority not classifiable' : 'PDA authority', [], [
+      posture === 'unknown'
+        ? 'the authority bytes did not decode, so there is nothing for any funding claim to attach to'
+        : 'the signer is a program address: who can move it is decided by code Dot has not read, and "funded by a mixer" has no meaning for a PDA. This axis stays unmeasured rather than assuming the answer',
+    ]);
+  }
+
+  // posture === 'eoa'
+  const notAssessed: string[] = [];
+  // Worth saying on every single-key path: the mixer half of the brief's +30 has no data source inside
+  // Dot, so a 20 here is "nothing fresh turned up", and a reader must not hear it as "not mixer-funded".
+  const noList =
+    (i.suspectAddressesSeen ?? 0) === 0
+      ? 'no suspect funding addresses were supplied (`--suspect`), so the flagged-source band was unreachable by construction — Dot ships no mixer or obfuscation list of its own. This axis can report "no fresh funding observed"; it cannot report "not mixer-funded"'
+      : null;
+  const f = i.funding;
+  if (!f) {
+    notAssessed.push('funding was not probed (it costs RPC calls; run with --check-funding). Scored as an ordinary single key, not as an innocent one');
+    if (noList) notAssessed.push(noList);
+    return mk(20, 'single EOA, funding unprobed', ['+20: one key controls this program'], notAssessed);
+  }
+  if (f.state === 'flagged_source') {
+    return mk(30, 'single EOA funded by a named suspect address', [`+30: ${f.detail}`], []);
+  }
+  if (noList) notAssessed.push(noList);
+  if (f.state === 'recent_funding_observed') {
+    const age = f.ageMs < 86_400_000 ? `${Math.max(1, Math.round(f.ageMs / 3_600_000))} hour(s) ago` : `${Math.round(f.ageMs / 86_400_000)} day(s) ago`;
+    if (f.retentionBounded) {
+      notAssessed.push(`the wallet looks young (${age}) but the node could be hiding older history, so "fresh" is not established and the +30 is withheld`);
+      return mk(20, `single EOA, funding ${age} (retention-bounded)`, ['+20: standard single-key risk'], notAssessed);
+    }
+    return mk(30, `single EOA funded ${age}`, [`+30: ${f.detail}`], []);
+  }
+  if (f.state === 'unverified') {
+    notAssessed.push(`funding probe inconclusive: ${f.detail}. An unverified authority is not a verified one`);
+    return mk(20, 'single EOA, funding unverified', ['+20: standard single-key risk'], notAssessed);
+  }
+  return mk(20, 'single EOA with an established history', ['+20: standard single-key risk; the funding walk found long-standing activity, which removes the freshness signal and nothing else'], notAssessed);
+}
+
+/**
+ * Malice signature 2 — code anomaly (0–20). Both awards are structural facts the diff already
+ * reports; neither is an inference about why the change was made.
+ */
+function anomalyAxis(d: NonNullable<DangerInputs['delta']>): DangerAxis {
+  const max = AXIS_MAX.codeAnomaly;
+  const detail: string[] = [];
+  const notAssessed: string[] = [];
+  const widening = d.accountChanges.filter((a) => a.existing && (a.addedSigner.length > 0 || a.addedWritable.length > 0));
+  let points = 0;
+  if (d.undeclaredEntrypoints.length > 0) {
+    points += 20;
+    detail.push(`+20: selector${d.undeclaredEntrypoints.length === 1 ? '' : 's'} reachable in the bytecode and absent from the published interface (${d.undeclaredEntrypoints.map((n) => `\`${n}\``).join(', ')})`);
+  } else if (widening.length > 0) {
+    points += 20;
+    for (const a of widening) {
+      detail.push(`+20: \`${a.instruction}\` now takes${a.addedSigner.length ? ` a signer (${a.addedSigner.join(', ')})` : ''}${a.addedWritable.length ? ` a writable account (${a.addedWritable.join(', ')})` : ''} it did not before`);
+    }
+  }
+  if (d.confidence === 'unscannable') {
+    points += 10;
+    detail.push('+10: the image could not be scanned, so nothing here rules a hidden handler out');
+  }
+  if (points === 0) detail.push('0: additive, or at least nothing the diff flags as a signature');
+  if (d.confidence === 'partial' || d.confidence === 'bytecode_only') {
+    notAssessed.push(`confidence is \`${d.confidence}\`: one side of the comparison was missing, so "no anomaly found" is weaker than it looks`);
+  }
+  return {
+    id: 'codeAnomaly',
+    points: Math.min(points, max),
+    max,
+    label: points > 0 ? detail[0]!.replace(/^\+\d+: /, '') : 'no anomaly signature located',
+    detail,
+    notAssessed,
+  };
+}
+
+/**
+ * Malice signature 3 — timing (0–10). Two of the brief's three cases need data Dot does not have by
+ * default, so the axis is honest about being unmeasured instead of scoring 0 and reading as routine.
+ */
+function timingAxis(t: NonNullable<DangerInputs['timing']>): DangerAxis {
+  const max = AXIS_MAX.timingAnomaly;
+  const detail: string[] = [];
+  const notAssessed: string[] = [];
+  // A caller that does not say where its clock came from is treated as having nothing better than its
+  // own wristwatch, because that is the reading which cannot overstate the proximity claim.
+  const ref = t.upgradeTimeSource ?? 'analysis-clock';
+
+  if (t.governanceGapMs !== null && t.governanceGapMs <= 3_600_000) {
+    detail.push(`+10: a signature on the declared governance program landed ${Math.max(1, Math.round(t.governanceGapMs / 60_000))} minute(s) from this upgrade${ref === 'analysis-clock' ? ' (against Dot\'s own clock — see the caveat below)' : ''}`);
+  } else if (t.governanceGapMs !== null) {
+    notAssessed.push(`the nearest governance-program signature was ${Math.round(t.governanceGapMs / 3_600_000)} hour(s) away, outside the 1-hour band`);
+  } else {
+    notAssessed.push('governance proximity not measured: no governance program was supplied, so this is neither clear nor suspicious');
+  }
+  notAssessed.push(`what a signature on that program means: Dot counts any transaction, and cannot tell a governance *proposal* from an ordinary call on the same program. Measured against ${TIMING_REFERENCE_NOTE[ref]}.`);
+  if (t.incidentGapMs !== null && t.incidentGapMs <= 3 * 3_600_000) {
+    detail.push(`+10: ${Math.max(1, Math.round(t.incidentGapMs / 60_000))} minute(s) from an incident window an operator declared`);
+  } else if (t.incidentGapMs !== null) {
+    notAssessed.push(`the declared incident window was ${(t.incidentGapMs / 3_600_000).toFixed(1)} hour(s) away, outside the 3-hour band`);
+  } else {
+    notAssessed.push('"during a known network incident" is not checkable by default: Dot ships no incident feed and fetches none, so it is only ever measured when an operator declares a time (--incident-at)');
+  }
+
+  if (t.upgradeTimeMs !== null && t.priorUpgradeTimesMs.length >= 3) {
+    // Intervals between consecutive observed upgrades, not the timestamps themselves: the median of
+    // a list of dates is a date, and comparing "days since the last one" against it is meaningless.
+    const sorted = [...t.priorUpgradeTimesMs].sort((a, b) => a - b);
+    const intervals = sorted.slice(1).map((x, k) => x - sorted[k]!).filter((x) => x > 0).sort((a, b) => a - b);
+    const since = t.upgradeTimeMs - sorted[sorted.length - 1]!;
+    if (intervals.length >= 2 && since > 0) {
+      const median = intervals[Math.floor(intervals.length / 2)]!;
+      const days = (ms: number) => Math.max(1, Math.round(ms / 86_400_000));
+      if (since > median * 3) {
+        detail.push(`+5: this upgrade comes ${days(since)} day(s) after the last one Dot observed, against a typical interval near ${days(median)} day(s) (Dot's own observation times, not the chain's upgrade history)`);
+      } else if (since < median / 3) {
+        detail.push(`+5: ${days(since)} day(s) since the last observed upgrade, well under this program's typical ${days(median)} day(s) (Dot's own observation times, not the chain's)`);
+      }
+    }
+  } else {
+    notAssessed.push('off-cadence requires 3 prior upgrades with block times; this run had fewer, so "routine cadence" is not established either');
+  }
+
+  const awarded = detail.reduce((sum, line) => sum + (line.startsWith('+10') ? 10 : line.startsWith('+5') ? 5 : 0), 0);
+  const measurable = t.governanceGapMs !== null || t.incidentGapMs !== null || t.priorUpgradeTimesMs.length >= 3;
+  // Cadence is computed against Dot's own observations of this program, never against the chain's upgrade history, and the detail line says so.
+  if (!measurable) {
+    return { id: 'timingAnomaly', points: null, max, label: 'no timing evidence available', detail: [], notAssessed };
+  }
+  return {
+    id: 'timingAnomaly',
+    points: Math.min(awarded, max),
+    max,
+    label: awarded > 0 ? detail[0]!.replace(/^\+\d+: /, '') : 'timing fits this program\'s own history',
+    detail: awarded > 0 ? detail : ['0: routine on the evidence that exists'],
+    notAssessed,
+  };
+}
+
 function formatLamports(lamports: number, usdPerSol: number | null): string {
   const sol = lamports / 1e9;
   const solText = sol >= 1 ? `${sol.toLocaleString(undefined, { maximumFractionDigits: 2 })} SOL` : `${lamports.toLocaleString(undefined, { maximumFractionDigits: 0 })} lamports`;
@@ -268,18 +603,33 @@ function verdictFor(i: DangerInputs, axes: DangerAxis[], category: DangerCategor
  * pass `null` for anything they do not have — that `null` is the whole difference between a
  * LOW that means "small" and a LOW that means "unmeasured".
  */
+const MALICE_TOTAL_SCORE_GATE = 90;
+
+/** The alarm text the brief specifies. Only ever printed beside the gate that produced it. */
+export const SUSPECTED_MALICIOUS_VERDICT =
+  'VERDICT: SUSPECTED_MALICIOUS — This upgrade has the structural signature of an attack. Immediate human review required. Do not trust the new bytecode.';
+
 export function scoreDanger(i: DangerInputs): DangerAssessment {
   const axes: DangerAxis[] = [
     authorityAxis(i.authority),
-    i.delta === null
+    !i.delta
       ? { id: 'codeDelta', points: null, max: AXIS_MAX.codeDelta, label: 'no bytecode diff performed', detail: [], notAssessed: ['the diff was never run, so the axis has no data'] }
       : deltaAxis(i.delta),
-    i.radius === null
+    !i.radius
       ? { id: 'blastRadius', points: null, max: AXIS_MAX.blastRadius, label: 'no dependency graph built', detail: [], notAssessed: ['no graph, so dependents and routed value are unknown rather than zero'] }
       : radiusAxis(i.radius),
-    i.behavior === null
+    !i.behavior
       ? { id: 'behavior', points: null, max: AXIS_MAX.behavior, label: 'no behavioural data supplied', detail: [], notAssessed: ['the caller had neither a state file nor a prior digest'] }
       : behaviorAxis(i.behavior),
+    !i.integrity
+      ? { id: 'authorityIntegrity', points: null, max: AXIS_MAX.authorityIntegrity, label: 'authority integrity not assessed', detail: [], notAssessed: ['no funding probe and no declared multisig threshold: the axis has nothing to stand on'] }
+      : integrityAxis(i.integrity, i.authority.posture),
+    !i.delta
+      ? { id: 'codeAnomaly', points: null, max: AXIS_MAX.codeAnomaly, label: 'no bytecode diff performed', detail: [], notAssessed: ['the diff never ran, so no structural signature was checked'] }
+      : anomalyAxis(i.delta),
+    !i.timing
+      ? { id: 'timingAnomaly', points: null, max: AXIS_MAX.timingAnomaly, label: 'no timing evidence supplied', detail: [], notAssessed: ['the caller passed neither a governance program nor prior upgrade timestamps'] }
+      : timingAxis(i.timing),
   ];
 
   const scored = axes.filter((x) => x.points !== null) as Array<DangerAxis & { points: number }>;
@@ -287,19 +637,64 @@ export function scoreDanger(i: DangerInputs): DangerAssessment {
   const possible = scored.reduce((s, x) => s + x.max, 0);
   const score = Math.min(100, rawScore);
   const uncappedCategory = categoryFor(score);
-  const unassessedAxes = axes.filter((x) => x.points === null).map((x) => x.id);
 
-  // A missing axis is a reason not to top out. The brief's own worst case (40+30+30+20) is
-  // unreachable if one of the four was never measured, and a reader who sees CRITICAL with a
-  // null blast radius has been told nothing about who depends on the program.
+  // The ceiling rule applies to the four queue-position axes only. The three signature axes are
+  // opt-in evidence that costs RPC calls: withholding CRITICAL because an operator did not run
+  // `--check-funding` would make the default ranking unable to top out, which is the same
+  // mistake as a score that reads high on a run that measured nothing.
+  const QUEUE: readonly DangerAxisId[] = ['authority', 'codeDelta', 'blastRadius', 'behavior'];
+  const unassessedAxes = axes.filter((x) => x.points === null).map((x) => x.id);
+  const unassessedQueue = unassessedAxes.filter((id) => QUEUE.includes(id));
   let category = uncappedCategory;
   let ceiling: string | null = null;
-  if (unassessedAxes.length > 0 && category === 'CRITICAL') {
+  if (unassessedQueue.length > 0 && category === 'CRITICAL') {
     category = oneBandLower(uncappedCategory);
-    ceiling = `CRITICAL withheld: ${unassessedAxes.join(', ')} not assessed (max possible from measured axes was ${possible}/120)`;
+    ceiling = `CRITICAL withheld: ${unassessedQueue.join(', ')} not assessed (max possible from measured queue axes was ${possible}/180 including signature axes)`;
   }
 
+  const byId = new Map(axes.map((a) => [a.id, a]));
+  const integrity = byId.get('authorityIntegrity')!;
+  const anomaly = byId.get('codeAnomaly')!;
+  const timing = byId.get('timingAnomaly')!;
+  const signatureAxes = [integrity, anomaly, timing];
+  const maliceScore = signatureAxes.reduce((sum, a) => sum + (a.points ?? 0), 0);
+  const measured = signatureAxes.some((a) => a.points !== null);
+  const authorityIntegrityPositive = (integrity.points ?? 0) > 0;
+  // The brief's gate is `score >= 90 AND authorityIntegrity > 0`. Applied literally it fired on the
+  // first ordinary case tried — a single-key program with an established history, an unscannable
+  // image and a widened account set scored 110 raw and screamed — which constraint 2 forbids. The
+  // tightened gate below is that deviation, and the rarity test in test/danger.test.ts is its evidence:
+  // a non-zero integrity axis is not enough, the run needs *positive* malice evidence, of exactly two
+  // kinds Dot can observe. The 30-point integrity band is reachable only from funding evidence, never
+  // from posture, and an undeclared selector is a selector the published interface denies. Absence of
+  // verification is deliberately neither: `unscannable` says Dot could not look, and a heuristic that
+  // reads blindness as evidence of wrongdoing will be loud on exactly the programs nobody can verify.
+  const integrityFromEvidence = (integrity.points ?? 0) >= AXIS_MAX.authorityIntegrity;
+  const undeclaredSelector = (i.delta?.undeclaredEntrypoints.length ?? 0) > 0;
+  const flagged =
+    measured && score >= MALICE_TOTAL_SCORE_GATE && authorityIntegrityPositive && (integrityFromEvidence || undeclaredSelector);
+
+  const evidenceParts: string[] = [];
+  if (integrity.points !== null && integrity.points > 0) evidenceParts.push(`Authority integrity ${integrity.points}/${integrity.max}: ${integrity.detail.join('; ') || integrity.label}.`);
+  if (anomaly.points !== null && anomaly.points > 0) evidenceParts.push(`Code anomaly ${anomaly.points}/${anomaly.max}: ${anomaly.detail.join('; ')}.`);
+  if (timing.points !== null && timing.points > 0) evidenceParts.push(`Timing ${timing.points}/${timing.max}: ${timing.detail.join('; ')}.`);
+  const unmeasured = signatureAxes.filter((a) => a.points === null).map((a) => a.id);
+  const evidence = flagged
+    ? `${evidenceParts.join(' ')}${unmeasured.length ? ` Not measured: ${unmeasured.join(', ')}.` : ''} Score: ${score}/100.`
+    : measured
+      ? `Signature axes total ${maliceScore}/${AXIS_MAX.authorityIntegrity + AXIS_MAX.codeAnomaly + AXIS_MAX.timingAnomaly}; the gate needs the overall score at or above ${MALICE_TOTAL_SCORE_GATE}${authorityIntegrityPositive ? '' : ' with a non-zero authority-integrity axis'}.`
+      : 'No malice signature axis was measurable on this run, so the heuristic reports nothing — which is not a clean result.';
+
   return {
+    malice: {
+      flagged,
+      verdictLine: flagged ? SUSPECTED_MALICIOUS_VERDICT : null,
+      maliceScore,
+      gate: { totalScoreAtLeast: MALICE_TOTAL_SCORE_GATE, totalScore: score, authorityIntegrityPositive, positiveEvidence: integrityFromEvidence || undeclaredSelector, measured },
+      evidence,
+      disclaimer:
+        'This is a heuristic over structural and behavioural signatures, not a judgement about intent. Dot does not classify malice (see NO_MALICE_DETECTION); a team with a fresh ops wallet, a stale IDL and an honest upgrade produces the same signature as an attacker, and that is the accepted cost of a scream that is tuned to be rare.',
+    },
     score,
     rawScore,
     category,
@@ -320,7 +715,7 @@ export function scoreDanger(i: DangerInputs): DangerAssessment {
 export function renderDanger(d: DangerAssessment): string {
   const L: string[] = [];
   L.push(`UPGRADE DANGER RANKING: ${d.category} (Score: ${d.score}/100)`);
-  if (d.rawScore > 100) L.push(`  raw ${d.rawScore} before the 100 clamp; the four axes sum to 120, not 100`);
+  if (d.rawScore > 100) L.push(`  raw ${d.rawScore} before the 100 clamp; the seven axes sum to 180, not 100`);
   if (d.unassessedAxes.length > 0) {
     L.push(`  scored on ${d.coverage.scored} of ${d.coverage.possible} measurable axis points; no data for: ${d.unassessedAxes.join(', ')}`);
   }
@@ -336,8 +731,52 @@ export function renderDanger(d: DangerAssessment): string {
     for (const n of a.notAssessed) L.push(`      · ${a.id}: ${n}`);
   }
   L.push('');
+  L.push(maliceBlock(d));
+  L.push('');
   L.push(`VERDICT: ${d.verdict}`);
   return L.join('\n');
 }
 
-const cap = (id: DangerAxisId) => ({ authority: 'Authority', codeDelta: 'Code Delta', blastRadius: 'Blast Radius', behavior: 'Behavior' })[id];
+/**
+ * The malice section. The label says what it is — a heuristic over signatures — before any of the
+ * evidence does the shouting, because the whole value of a rare scream is that a reader can tell it
+ * apart from a finding without having to know how this number was made.
+ */
+function maliceBlock(d: DangerAssessment): string {
+  const m = d.malice;
+  const total = AXIS_MAX.authorityIntegrity + AXIS_MAX.codeAnomaly + AXIS_MAX.timingAnomaly;
+  const L: string[] = [];
+  if (!m.gate.measured) {
+    L.push(`MALICE HEURISTIC: not assessed — no signature axis had data on this run (${m.evidence})`);
+    return L.join('\n');
+  }
+  if (m.flagged) {
+    L.push('MALICE HEURISTIC: **SUSPECTED_MALICIOUS** — a scream, not a proof');
+    // The brief's alarm sentence, unindented and verbatim, immediately under its own heading. There are
+    // now two `VERDICT:` lines in this block — this one, and the queue-position verdict at the bottom
+    // of the ranking. That is what the two briefs asked for; the heading above is what tells them apart,
+    // so do not "resolve" the duplication by deleting either one.
+    L.push(m.verdictLine!);
+    L.push(`  ${m.evidence}`);
+    const parts = d.axes
+      .filter((a) => (MALICE_AXES as readonly string[]).includes(a.id))
+      .map((a) => `${a.id} ${a.points ?? 0}/${a.max}`);
+    L.push(`  signature axes: ${parts.join(', ')} = ${m.maliceScore}/${total}`);
+    L.push(`  gate: overall score ${m.gate.totalScore} >= ${m.gate.totalScoreAtLeast} AND authority integrity ${m.gate.authorityIntegrityPositive ? '> 0' : '= 0 (gate not satisfied)'}`);
+    L.push(`  ${m.disclaimer}`);
+    return L.join('\n');
+  }
+  L.push(`MALICE HEURISTIC: not flagged. ${m.evidence}`);
+  return L.join('\n');
+}
+
+const cap = (id: DangerAxisId) =>
+  ({
+    authority: 'Authority',
+    codeDelta: 'Code Delta',
+    blastRadius: 'Blast Radius',
+    behavior: 'Behavior',
+    authorityIntegrity: 'Authority Integrity',
+    codeAnomaly: 'Code Anomaly',
+    timingAnomaly: 'Timing Anomaly',
+  })[id];

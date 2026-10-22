@@ -12,6 +12,10 @@ const base = (over: Partial<DangerInputs> = {}): DangerInputs => ({
   delta: { confidence: 'structural', addedEntrypoints: [], undeclaredEntrypoints: [], accountChanges: [] },
   radius: { direct: 0, transitive: 0, lamportsRouted: 0, usdPerSol: null, mintsTouched: 0 },
   behavior: { priorDigestAt: '2026-09-01T00:00:00.000Z', stateFileUsed: true },
+  // The malice axes are off in the base fixture: the four queue-position axes are what most tests
+  // here are about, and a default that shouts would make every existing assertion ambiguous.
+  integrity: null,
+  timing: null,
   ...over,
 });
 
@@ -58,7 +62,7 @@ describe('upgrade danger ranking — axes', () => {
         confidence: 'unscannable',
         addedEntrypoints: ['emergency_withdraw'],
         undeclaredEntrypoints: [],
-        accountChanges: [{ instruction: 'emergency_withdraw', addedSigner: [], addedWritable: ['vault'] }],
+        accountChanges: [{ instruction: 'emergency_withdraw', addedSigner: [], addedWritable: ['vault'], existing: true }],
       },
     }));
     expect(axis(d, 'codeDelta').points).toBe(30);
@@ -81,9 +85,9 @@ describe('upgrade danger ranking — axes', () => {
         addedEntrypoints: ['a', 'b', 'c'],
         undeclaredEntrypoints: [],
         accountChanges: [
-          { instruction: 'a', addedSigner: ['s1'], addedWritable: [] },
-          { instruction: 'b', addedSigner: [], addedWritable: ['w1'] },
-          { instruction: 'c', addedSigner: ['s2'], addedWritable: ['w2'] },
+          { instruction: 'a', addedSigner: ['s1'], addedWritable: [], existing: true },
+          { instruction: 'b', addedSigner: [], addedWritable: ['w1'], existing: true },
+          { instruction: 'c', addedSigner: ['s2'], addedWritable: ['w2'], existing: true },
         ],
       },
     }));
@@ -150,23 +154,29 @@ describe('upgrade danger ranking — axes', () => {
 
 describe('upgrade danger ranking — totals, ceilings and output', () => {
   const maxedOut = (over: Partial<DangerInputs> = {}) => scoreDanger(flat({
-    delta: { confidence: 'unscannable', addedEntrypoints: ['x'], undeclaredEntrypoints: [], accountChanges: [{ instruction: 'x', addedSigner: ['s'], addedWritable: ['w'] }] },
+    delta: { confidence: 'unscannable', addedEntrypoints: ['x'], undeclaredEntrypoints: [], accountChanges: [{ instruction: 'x', addedSigner: ['s'], addedWritable: ['w'], existing: true }] },
     radius: { direct: 5, transitive: 5, lamportsRouted: 20_000_000, usdPerSol: null, mintsTouched: 0 },
     behavior: { priorDigestAt: null, stateFileUsed: true },
     ...over,
   }));
 
-  it('keeps the raw total visible because the axes sum to 120, not 100', () => {
+  it('keeps the raw total visible because the seven axes sum to 180, not 100', () => {
     const d = maxedOut();
-    expect(d.rawScore).toBe(120);
+    // 40 posture + 30 delta + 30 radius + 20 first-observed + 20 code-anomaly. The two signature
+    // axes that would add 30 and 10 more were never probed, so they contribute nothing here.
+    expect(d.rawScore).toBe(140);
     expect(d.score).toBe(100);
     expect(d.category).toBe('CRITICAL');
-    expect(renderDanger(d)).toMatch(/raw 120 before the 100 clamp/);
+    expect(renderDanger(d)).toMatch(/raw 140 before the 100 clamp/);
   });
 
   it('treats a missing graph and a missing diff as holes in the total, not as low scores', () => {
     const d = scoreDanger(flat({ delta: null, radius: null, behavior: null }));
-    expect(d.unassessedAxes.slice().sort()).toEqual(['behavior', 'blastRadius', 'codeDelta']);
+    // Every axis without data is listed, including the three signature axes the caller declined to
+    // feed — but only the four queue axes can withhold a ceiling (see the next test).
+    expect(d.unassessedAxes.slice().sort()).toEqual(
+      ['authorityIntegrity', 'behavior', 'blastRadius', 'codeAnomaly', 'codeDelta', 'timingAnomaly'],
+    );
     expect(d.coverage).toEqual({ scored: 40, possible: 40 });
     expect(d.score).toBe(40);
     // MODERATE, not LOW: a single key that can rewrite the program is worth 40 points on its
@@ -175,7 +185,7 @@ describe('upgrade danger ranking — totals, ceilings and output', () => {
     // unmeasured blast radius does not make an EOA-authority upgrade safe.
     expect(d.category).toBe('MODERATE');
     expect(d.verdict).toMatch(/unknown rather than small/);
-    expect(renderDanger(d)).toMatch(/scored on 40 of 40 measurable axis points; no data for: codeDelta, blastRadius, behavior/);
+    expect(renderDanger(d)).toMatch(/scored on 40 of 40 measurable axis points; no data for: codeDelta, blastRadius, behavior, authorityIntegrity, codeAnomaly, timingAnomaly/);
   });
 
   it('withholds CRITICAL when an axis was not measured, and records the withholding', () => {
@@ -183,12 +193,35 @@ describe('upgrade danger ranking — totals, ceilings and output', () => {
     expect(full.uncappedCategory).toBe('CRITICAL');
     expect(full.ceiling).toBeNull();
     const noRadius = maxedOut({ radius: null });
-    expect(noRadius.rawScore).toBe(90);
+    expect(noRadius.rawScore).toBe(110);
     expect(noRadius.category).toBe('HIGH');
-    expect(noRadius.ceiling).toMatch(/CRITICAL withheld/);
-    expect(noRadius.unassessedAxes).toEqual(['blastRadius']);
+    expect(noRadius.ceiling).toMatch(/CRITICAL withheld: blastRadius/);
+    // The signature axes stayed unmeasured and that is reported, not punished: an operator who did
+    // not run --check-funding has not lost the queue position, only the extra evidence.
+    expect(noRadius.unassessedAxes).toContain('blastRadius');
+    expect(noRadius.unassessedAxes).toContain('authorityIntegrity');
+    expect(noRadius.category).toBe('HIGH');
     const noDelta = maxedOut({ delta: null });
     expect(noDelta.category).toBe('HIGH');
+    // Every axis *scored* (EOA authority integrity = 20, anomaly present, cadence measurable and
+    // routine) — this is the shape that can top out honestly, and it still cannot scream, because
+    // nothing here is evidence of anything but an ordinary single-key program.
+    const probed = maxedOut({
+      integrity: { funding: { state: 'established', detail: 'two years of signatures' }, declaredThreshold: null, timelockDeclared: false, fundingProbe: { callsSpent: 4, signaturesSeen: 10 } },
+      timing: {
+        priorUpgradeTimesMs: [Date.now() - 90 * 86_400_000, Date.now() - 60 * 86_400_000, Date.now() - 30 * 86_400_000],
+        upgradeTimeMs: Date.now() - 2 * 86_400_000,
+        governanceGapMs: null,
+        incidentGapMs: null,
+      },
+    });
+    expect(probed.category).toBe('CRITICAL');
+    expect(probed.malice.flagged).toBe(false);
+    expect(probed.malice.maliceScore).toBe(40);
+    // Timing with no prior upgrades, no governance program and no declared incident is not "routine",
+    // it is unmeasured — and says so as an unassessed axis.
+    const noTiming = maxedOut({ timing: { priorUpgradeTimesMs: [], upgradeTimeMs: 1, governanceGapMs: null, incidentGapMs: null } });
+    expect(noTiming.unassessedAxes.slice().sort()).toEqual(['authorityIntegrity', 'timingAnomaly']);
   });
 
   it('renders the tree the brief asked for, with one line per axis and a verdict', () => {
@@ -203,9 +236,13 @@ describe('upgrade danger ranking — totals, ceilings and output', () => {
     expect(out).toMatch(/├── Authority: Single-key EOA \(4e7a\S+\) \[\+40\/40\]/);
     expect(out).toMatch(/├── Code Delta: added entrypoint `emergency_withdraw` \[\+15\/30\]/);
     expect(out).toMatch(/├── Blast Radius: 1 direct, 34 transitive, routing 0 lamports in the sample \(a per-transaction proxy, not a TVL figure\) \[\+20\/30\]/);
-    expect(out).toMatch(/└── Behavior: first upgrade Dot has observed for this program \[\+20\/20\]/);
+    expect(out).toMatch(/├── Behavior: first upgrade Dot has observed for this program \[\+20\/20\]/);
+    expect(out).toMatch(/├── Authority Integrity: authority integrity not assessed \[not assessed\/30\]/);
+    expect(out).toMatch(/├── Code Anomaly: no anomaly signature located \[\+0\/20\]/);
+    expect(out).toMatch(/└── Timing Anomaly: no timing evidence supplied \[not assessed\/10\]/);
     expect(out).toMatch(/^VERDICT: /m);
-    expect(out.match(/[├└]── /g)?.length).toBe(4);
+    expect(out).toMatch(/MALICE HEURISTIC: not flagged\. Signature axes total 0\/60/);
+    expect(out.match(/[├└]── /g)?.length).toBe(7);
   });
 
   it('does not call a new entrypoint a vulnerability anywhere in the output', () => {

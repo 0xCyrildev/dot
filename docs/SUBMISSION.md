@@ -273,9 +273,11 @@ spawns the process over real stdio pipes and asserts every stdout line is parsea
 stray `console.log` corrupts the stream and the host drops the connection with no useful error.
 
 Every tool result carries the danger ranking in `structuredContent.danger` — score, raw score,
-category, the withheld-ceiling note, the coverage pair and the four axes with their `notAssessed`
-lines — and `test/mcp.test.ts` pins that the key is present as `null` when there is no ranking,
-because an omitted key and a null one read differently to a consumer and only one of them is honest.
+category, the withheld-ceiling note, the coverage pair, the seven axes with their `notAssessed`
+lines and the malice gate (`danger.malice`: flagged, the verdict sentence, the signature-axis total and
+the four gate booleans) — and `test/mcp.test.ts` pins that the key is present as `null` when there is no
+ranking, because an omitted key and a null one read differently to a consumer and only one of them is
+honest.
 One consequence of wiring it this way is worth stating rather than hiding: the MCP path has no
 `--state` file, so its behavioural axis is always unmeasured, so **`dot_evaluate_upgrade` can never
 return CRITICAL.** That is the ceiling rule doing its job — a tool that cannot tell whether this is a
@@ -372,6 +374,7 @@ handwritten to match the code that reads it.
 | [`calibrated-model-2026-10-21.json`](./calibrated-model-2026-10-21.json) | `dot calibrate --blocks 6 --out docs/calibrated-model-2026-10-21.json` | The ingestion cost model measured rather than assumed: 506 transactions per block, 18,040 bytes per fetched transaction. Supplied to the analyzer it changes the reported byte amplification from 2000x to 506x. Two consecutive runs gave 506 and 687, which is why the file carries its endpoint and date. |
 | [`live-run-2026-10-21.json`](./live-run-2026-10-21.json) | `dot analyze LBUZ… --mode rules` (older session) | Kept because it is the honest failure case: `-32015` on every trace fetch, tier capped at P3 by coverage. A refusal, not a clean result. |
 | [`live-danger-2026-10-22.md`](./live-danger-2026-10-22.md) | `dot analyze LBUZ… --sample 2 --budget-rpc 20 --sol-usd 150`, then the same with `--state` | The Upgrade Danger Ranking, live, twice on one program: **LOW 10/100** with two axes unmeasured, then **MODERATE 50/100** once a state file made the behavioural axis scoreable and a sample found one caller (1.7 SOL, 3 mints touched — reported as unusable for the ×2 multiplier, because the graph has no token amounts). The score moved because the evidence moved, which is the property the artifact exists to show. Not reproducible from the published 1.0.0: it postdates the release. |
+| [`live-malice-2026-10-22.md`](./live-malice-2026-10-22.md) | the same two programs, `--check-funding` | The malice heuristic live, on real authorities: **0 of 2 screamed.** One is a single-EOA authority whose funding looked five hours old and was not called fresh, because the node returned a full page and older history cannot be ruled out — the constraint that a missing check is not a clean check, doing its job on mainnet data. |
 | [`replay-pamm.txt`](./replay-pamm.txt) | `dot replay --fixture test/fixtures/tx-nested.json --target pAMM…` | The real parser, offline, on a captured mainnet transaction: depth-2 attribution, dependents and lamports, reproducible with no network. |
 
 What these runs also produced were five bug fixes, because a measurement can disagree with the tool:
@@ -440,7 +443,7 @@ being a claim about coverage (two images, not a corpus).
 
 **The danger ranking reports its own holes in the number, and three of the brief's inputs do not
 exist.** `src/score/danger.ts` answers "how soon should a human open this upgrade" with a 0–100
-score over four axes, deliberately separate from the P0–P3 tier: a program with a dull history and
+score over four queue-position axes (§10 adds the three signature axes), deliberately separate from the P0–P3 tier: a program with a dull history and
 200 dependents can be P1 by exposure and CRITICAL by posture, and the two numbers disagreeing is
 information, not a defect. Three sub-claims in the specification cannot be measured from anything Dot
 is allowed to read, and each is reported inside the axis that wanted it rather than approximated: the
@@ -449,11 +452,71 @@ identically (at the alarming end, 25, and printed as an assumption); "within 24h
 event" has no feed at all, so that award has never been given by any score this build produced; and
 routed *token* value is not attributable — the graph records which mints a call touched, never how much
 — so the ×2 multiplier is lamports-only. Two more choices are arithmetic made visible instead of
-absorbed: the four axes sum to 120, so `rawScore` is kept beside the clamped `score`; and an axis with
+absorbed: the queue-position axes sum to 120 and all seven sum to 180, so `rawScore` is kept beside the clamped `score`; and an axis with
 no data is `null`, never 0, so a run that never built a graph does not collect "0 blast radius" and a
-tidy-looking total — `coverage` prints how many of the 120 points were measurable and CRITICAL is
+tidy-looking total — `coverage` prints how many of the points that were scoreable actually were and CRITICAL is
 withheld outright when any axis was unmeasured. `DANGER_RANKING_UNMEASURED_INPUTS` carries the row in
 `dot limits --status`.
+
+## 10. Malice Detection: Detecting the Signature of an Attack, Not the Intent
+
+Dot does not know what anybody meant. Intent lives in a repository, a Discord, a signing ceremony — none
+of which this tool reads. What it *can* read is whether an upgrade arrives through the same structural
+shape an attack does, and whether that shape is rare enough to be worth shouting about. So three
+**signature** axes were added to the danger ranking: Authority Integrity (0–30), Code Anomaly (0–20),
+Timing Anomaly (0–10). Seven axes now, summing to 180, still clamped to a 100 score with `rawScore`
+beside it.
+
+- **Authority Integrity** — +30 only when funding was *observed*: a transfer into the authority from an
+  address the operator named (`--suspect`), or a first funding sitting at the very start of the wallet's
+  visible history. +20 single EOA, +10 a declared low-threshold multisig, 0 renounced or a declared
+  high threshold behind a declared timelock. "Funded by a mixer" needs a mixer list, and Dot ships none:
+  an invented one would be a claim about the world with no source, so that half of the band is reachable
+  only through an operator's list, and every single-key path prints that the band was unreachable without
+  one.
+- **Code Anomaly** — +20 for `undeclaredEntrypoints` (a selector reachable in the bytecode that the
+  published interface denies) or for a signer/writable widening on an instruction that already existed;
+  +10 for `unscannable`; 0 for additive change.
+- **Timing Anomaly** — +10 within an hour of activity on a declared governance program (`--governance-program`)
+  or of a declared incident (`--incident-at`); +5 off the program's own observed cadence. Any signature on
+  a governance program counts: Dot cannot tell a *proposal* from an ordinary call, and the axis says so in
+  its own `notAssessed` line, along with which clock it stood on — the watcher's detection time, the newest
+  sampled transaction, or Dot's own wristwatch, which is the only case where "recent" means "recent to me".
+
+**The gate, and the one place this deviates from the brief.** Applied literally — `score >= 90 AND
+authorityIntegrity > 0` — the flag fired on the first ordinary upgrade tried: a single-key program with an
+*established* history, an unscannable image and a widened account set scored 110 raw and screamed, which
+constraint 2 forbids. The shipped gate therefore also requires **positive** evidence of a kind Dot can
+observe: integrity at its 30-point band, or an undeclared selector. Absence of verification is deliberately
+excluded — `unscannable` records that Dot could not look, and a heuristic that reads blindness as wrongdoing
+would be loudest on exactly the programs nobody can check.
+
+**A missing check is not a clean check**, and the mechanism shows up in the numbers rather than in prose:
+a node that returns a full page of signatures makes the wallet look young without proving it is, so
+`retentionBounded` withholds the +30; a refused `getSignaturesForAddress` sets `authorityFunding:
+unverified` and scores the ordinary 20 with the refusal printed; a multisig threshold and a stale signer
+set are named as gaps instead of guessed; and the probe is opt-in (`--check-funding`) because it buys calls
+the analysis did not need.
+
+**How rare, measured.** [`live-malice-2026-10-22.md`](./live-malice-2026-10-22.md) runs it against two real
+mainnet programs with `--check-funding` on: neither screams, and one of them is a single-EOA authority with
+a genuinely recent-looking funding event that the node's retention would not let Dot call fresh.
+`test/malice.test.ts` runs nine ordinary synthetic shapes (unscannable bytecode, permission widening, first
+sighting, PDA authority, no diff, refused probe) and asserts none fire, and one extreme shape and asserts it
+does.
+
+**The output**, when it fires — labelled as a heuristic before it says anything that could be mistaken for a
+finding, and followed by the evidence rather than standing alone:
+
+```
+MALICE HEURISTIC: **SUSPECTED_MALICIOUS** — a scream, not a proof
+VERDICT: SUSPECTED_MALICIOUS — This upgrade has the structural signature of an attack. Immediate human review required. Do not trust the new bytecode.
+  Authority integrity 30/30: +30: first funded 2 hours ago … Code anomaly 20/20: +20: selector … (`drain`). Score: 100/100.
+```
+
+It is also above the fold in the markdown report, and in both `dot watch` summary lines, because an operator
+reading one line of a stream is the case where minutes matter. `NO_MALICE_DETECTION` stays UNRESOLVABLE in
+`dot limits --status`: the scream routes a human, it never adjudicates.
 
 ---
 

@@ -182,11 +182,11 @@ export const LIMIT_STATUS: LimitStatus[] = [
     code: 'DANGER_RANKING_UNMEASURED_INPUTS',
     state: 'NARROWED',
     change:
-      'The ranking reports its own gaps in the number rather than around it. An axis with no data is `null`, not 0, so a run that never built a graph does not collect 0 blast-radius points and a clean-looking total; `coverage` prints how many of the 120 possible axis points were measurable; `rawScore` is kept next to the 100 clamp because the axes sum to 120 and a reader is entitled to know that several were maxed out; and CRITICAL is withheld outright when any axis was unmeasured (`test/danger.test.ts` pins the clamp and the withholding). The three unanswerable sub-claims — multisig threshold, ecosystem-event proximity, routed token value — are each declared inside the axis that could not use them.',
+      'The ranking reports its own gaps in the number rather than around it. An axis with no data is `null`, not 0, so a run that never built a graph does not collect 0 blast-radius points and a clean-looking total; `coverage` prints the scored points against the points that were scoreable; `rawScore` is kept next to the 100 clamp because the axes sum to 180 and a reader is entitled to know that several were maxed out; and CRITICAL is withheld outright when any of the four **queue-position** axes was unmeasured (`test/danger.test.ts` pins the clamp and the withholding). The three signature axes are outside that rule on purpose — they cost RPC calls an operator may decline to spend, so withholding CRITICAL over an unrun `--check-funding` would make the default ranking unable to top out. The unanswerable sub-claims — multisig threshold, stale signer set, mixer provenance, ecosystem-event proximity, routed token value — are each declared inside the axis that could not use them, and `retentionBounded` stops a node with a trimmed history from minting the top integrity band.',
     remains:
-      'A 1-of-2 multisig and a 5-of-9 multisig score identically, because Dot does not decode the multisig account. Token-heavy programs are ranked on lamports alone: the graph knows which mints were touched and not how much. "First upgrade observed" is bounded by how long `--state` has been running, which for a program Dot was pointed at yesterday is not a statement about its history at all. And the score is a queue position derived from posture and volume — it is not a vulnerability claim, and a LOW is a statement about the evidence Dot was allowed to gather.',
-    tests: ['test/danger.test.ts', 'test/scout.test.ts'],
-    fix: 'Decode the authority account for its threshold, accept an operator-declared incident window instead of inventing one, and route token deltas from an indexer. docs/limits.md (dot limits) carries the row; the module header in src/score/danger.ts carries the reasoning.',
+      'A 1-of-2 multisig and a 5-of-9 multisig score identically on the queue axis, and neither can be banded on the integrity axis, because Dot does not decode the multisig account; no signer-set age is read either, so a stale set looks like a fresh one. "Funded by a mixer" is only ever "funded by an address the operator named" — this build ships no mixer list. Token-heavy programs are ranked on lamports alone: the graph knows which mints were touched and not how much. "First upgrade observed" is bounded by how long `--state` has been running, which for a program Dot was pointed at yesterday is not a statement about its history at all. And the score is a queue position derived from posture and volume — it is not a vulnerability claim, and a LOW is a statement about the evidence Dot was allowed to gather.',
+    tests: ['test/danger.test.ts', 'test/scout.test.ts', 'test/malice.test.ts', 'test/funding.test.ts'],
+    fix: 'Decode the authority account for its threshold and its signer ages, accept an operator-declared incident window instead of inventing one, and route token deltas from an indexer. docs/limits.md (dot limits) carries the row; the module header in src/score/danger.ts carries the reasoning.',
   },
   {
     code: 'PROGRAMDATA_REVERSE_LOOKUP',
@@ -228,10 +228,11 @@ export const LIMIT_STATUS: LimitStatus[] = [
   {
     code: 'NO_MALICE_DETECTION',
     state: 'UNRESOLVABLE_IN_CODE',
-    change: 'A tier is printed as a queue position with its components exposed, and every report ends with a sentence saying a low tier is a statement about evidence.',
+    change:
+      'A tier is printed as a queue position with its components exposed, and every report ends with a sentence saying a low tier is a statement about evidence. Three signature axes now notice the *shape* of an attack — who funded the authority and when, whether the bytecode answers to a selector the published interface denies, whether the timing fits the program\'s own cadence — and when the gate is satisfied the report says SUSPECTED_MALICIOUS with the axis points, the gate and the evidence under it, above the fold in the markdown and in both watch summary lines.',
     remains:
-      'Deciding whether an upgrade is hostile requires intent: repository, governance discussion, who signed. Dot ranks attention; it never adjudicates.',
-    tests: ['test/risk.test.ts'],
+      'None of that is intent. Dot ships no mixer list, so "funded from a suspect source" is only ever "funded from an address the operator named"; it cannot read a multisig threshold or a signer set\'s age; it has no incident feed; and a node\'s retention window caps how young it is allowed to call a wallet. The gate is a routing decision with a written-down reason, and the honest failure mode is symmetric: a team with a fresh ops wallet, a stale IDL and a benign upgrade produces the same signature as an attacker and will be screamed at. Deciding whether an upgrade is hostile still requires the repository, the governance discussion and who signed — none of which this tool reads.',
+    tests: ['test/risk.test.ts', 'test/malice.test.ts', 'test/funding.test.ts', 'test/danger.test.ts'],
   },
   {
     code: 'PDA_HOLDINGS_NOT_ENUMERATED',

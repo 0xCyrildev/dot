@@ -99,7 +99,8 @@ export type DotReport = {
   /** Structural bytecode diff (Anchor entrypoints) when a prior image was obtainable. */
   bytecodeDiff?: import('./state/bytecodeDiff.js').BytecodeDiff;
   /**
-   * The 0-100 Upgrade Danger Ranking, and the four axes it was built from. Separate from
+   * The 0-100 Upgrade Danger Ranking, and the seven axes it was built from — four queue-position and
+   * three malice-signature. Separate from
    * `tier`/`score`, which measure exposure: this measures how soon a human should open this
    * specific upgrade. An axis with no data is null in here, never 0.
    */
@@ -170,6 +171,16 @@ export function renderMarkdown(r: DotReport): string {
   L.push(`# Dot · ${r.label ? `${r.label} · ` : ''}${r.program}`);
   L.push('');
   L.push(`**${r.tier}** (tier source: ${r.tierSource}, score ${r.score}/100, confidence ${r.confidence})${tierFlag} — event \`${r.event}\`, mode \`${r.mode}\`, run ended at \`${r.stoppedAt}\``);
+  if (r.danger?.malice.flagged) {
+    // The scream goes above the fold, not only inside the ranking block: an operator who reads the
+    // first line and stops must not miss it. Label first, alarm second, evidence third — the banner
+    // says it is a heuristic before it says anything that could be mistaken for a finding.
+    L.push('');
+    L.push('> **SUSPECTED_MALICIOUS** — heuristic over structural signatures, not a finding.');
+    L.push(`> ${r.danger.malice.verdictLine}`);
+    L.push(`>`);
+    L.push(`> ${r.danger.malice.evidence}`);
+  }
   if (r.integrity) {
     L.push('');
     L.push(`**Endpoint corroboration: \`${r.integrity.agreement}\`** — ${r.integrity.reason}`);

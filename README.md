@@ -224,30 +224,37 @@ Every report carries a P0–P3 tier *and* a 0–100 **Upgrade Danger Ranking**. 
 questions and are allowed to disagree: the tier is exposure (how much of this program's blast radius
 Dot was allowed to see), the ranking is queue position (how soon should a human open *this* upgrade).
 
-Four axes — authority posture 40, code delta 30, blast radius 30, behavioural anomaly 20:
+Four queue-position axes — authority posture 40, code delta 30, blast radius 30, behavioural anomaly 20 —
+plus three malice-signature axes (§ *Malice detection* below): authority integrity 30, code anomaly 20,
+timing anomaly 10. This is a real run, from `docs/live-malice-2026-10-22.md`, with the per-axis `·` caveat
+lines elided:
 
 ```
-UPGRADE DANGER RANKING: LOW (Score: 30/100)
-  scored on 30 of 90 measurable axis points; no data for: codeDelta
+UPGRADE DANGER RANKING: LOW (Score: 10/100)
+  scored on 10 of 70 measurable axis points; no data for: codeDelta, behavior, authorityIntegrity, codeAnomaly, timingAnomaly
 ├── Authority: PDA authority (JADaUV…) [+10/40]
 ├── Code Delta: no bytecode diff performed [not assessed/30]
 ├── Blast Radius: 0 direct, 0 transitive, routing 0 lamports in the sample (a per-transaction proxy, not a TVL figure) [+0/30]
-└── Behavior: first upgrade Dot has observed for this program [+20/20]
+├── Behavior: no state file: Dot has no memory of this program [not assessed/20]
+├── Authority Integrity: PDA authority [not assessed/30]
+├── Code Anomaly: no bytecode diff performed [not assessed/20]
+└── Timing Anomaly: no timing evidence available [not assessed/10]
 ```
 
 Three things about that block are load-bearing, and they are the reason it is not just a gauge:
 
 - **An axis with no data is `null`, not 0.** The run above never diffed bytecode, so the code-delta
   axis is missing from the total rather than scored as "no changes" — and `CRITICAL` is withheld
-  whenever any axis was unmeasured. A hole in the evidence must never be able to read as a low score
-  *or* a high one.
-- **Three of the model's inputs do not exist on-chain, and the ranking says so in the axis that
+  whenever any of the four queue axes was unmeasured. A hole in the evidence must never be able to read
+  as a low score *or* a high one. The three signature axes sit outside that rule deliberately: they cost
+  RPC calls an operator may decline to spend.
+- **Several of the model's inputs do not exist on-chain, and the ranking says so in the axis that
   wanted them.** A multisig's threshold lives in an account Dot does not decode, so 1-of-2 and 5-of-9
   score the same (at the alarming end, printed as an assumption); "within 24h of a major ecosystem
   event" has no feed in Dot, so that bonus has never been awarded by any score this build produced;
   and the graph records *which* token mints a call touched, never how much, so the ×2 value
   multiplier is lamports-only. `dot limits --status` carries the row as `DANGER_RANKING_UNMEASURED_INPUTS`.
-- **The axes sum to 120, not 100.** The score clamps; `rawScore` is kept next to it so a reader can
+- **The axes sum to 180, not 100.** The score clamps; `rawScore` is kept next to it so a reader can
   tell "several axes maxed out" from "the ceiling is arithmetic".
 
 **The ask is a claim, not a complaint.** Alongside the number, `needs_more_budget` carries a hypothesis
@@ -256,6 +263,19 @@ plan and the one observation that would knock it down (`--hypothesis-out` writes
 carries it into a better-funded run, which re-tests it). A run that still cannot afford the plan, or that
 never sampled the thing the claim depends on, answers `not_testable` with the shortfall instead of
 `denied`: zero from a check that did not run is not evidence of absence.
+
+**Malice detection — the signature of an attack, not the intent.** Dot cannot read what anybody meant, so
+the three signature axes read what the chain says: who funded the upgrade authority and when
+(`authority integrity`, probed only under `--check-funding`, because it buys calls the analysis did not
+need), whether the new bytecode answers to a selector the published interface denies
+(`code anomaly`), and whether the timing fits this program's own cadence (`timing anomaly`). When the gate
+is satisfied the report prints `VERDICT: SUSPECTED_MALICIOUS` above the fold, in both watch summary lines,
+and in the ranking block — followed by the axis points that produced it, the gate that allowed it, and a
+sentence saying it is a heuristic. It is tuned to be rare: the brief's literal gate fired on the first
+ordinary upgrade tried, so the shipped gate also requires *positive* evidence, and `unscannable` — which
+only means Dot could not look — is deliberately not evidence. Two live mainnet programs with
+`--check-funding` on: 0 screams, and one of them had a genuinely recent-looking funding event that the
+node's retention would not let Dot call fresh (`docs/live-malice-2026-10-22.md`).
 
 **Fair share under a firehose.** In chain-wide mode a deploy storm can spend the entire day's allowance
 on the first program that looks interesting. `UpgradeDispatcher` caps each investigation at
@@ -517,7 +537,7 @@ change). `docs/live-limits-for-2026-10-21.md` is a real run against a mainnet pr
 | `PRE_DEPLOY_PARTIAL` | Narrowed: `STAGED_UPGRADE` now fires when an image is uploaded but not yet live, with hash, size and staging authority. Still unseen: what the image *does*, the program it belongs to until it lands, and any governance delay — `finalizeEta` says `immediate_unless_governed` rather than inventing one. |
 | `FINALITY_VS_LATENCY` | Reads are `finalized`, which costs minutes of detection. |
 | `ENDPOINT_CORROBORATION` | Comparison is only valid same-slot; a lone live endpoint is `single_source`, not verified. |
-| `NO_MALICE_DETECTION` | A tier is a queue position. Absence of a finding is not a clean bill of health. |
+| `NO_MALICE_DETECTION` | A tier is a queue position, and so is `SUSPECTED_MALICIOUS`: the scream reports a structural signature it can name, never an intent it cannot read. Absence of a finding is not a clean bill of health. |
 
 ---
 

@@ -202,13 +202,13 @@ function decide(f: Facts): ProgramLimitRow[] {
     ['PDA_HOLDINGS_NOT_ENUMERATED', 'not a property of this program: custody lives in PDAs whose seeds are in the deployment repo, not on the chain'],
     ['FAILED_TRANSACTIONS_ROLLED_BACK', 'not a property of this program: a failed transaction proves reach and intent, not a state change'],
     ['SIGNATURE_INDEX_IS_KEY_BASED', 'not a property of this program: getSignaturesForAddress matches keys, never roles, so the caller comes only from the inner-instruction fold'],
-    ['NO_MALICE_DETECTION', 'not a property of this program: Dot measures blast radius and does not classify intent'],
+    ['NO_MALICE_DETECTION', 'not a property of this program: Dot notices the structural signature of an attack and still does not classify intent'],
     ['BLOCK_FETCH_AMPLIFICATION', 'not a property of this program: a block carries every transaction in the slot, so batching trades calls for bytes'],
     ['PRE_DEPLOY_PARTIAL', 'not a property of this program: a Buffer has no back-link to the program it becomes'],
     ['FEED_BACKPRESSURE', 'not a property of this program: a live feed that cannot keep up drops events, and dropped is not clean'],
     ['GRPC_LIVE_PATH_UNREACHABLE', 'not a property of this program: no Geyser endpoint has ever answered this build, so live-feed detection of its upgrades is unproven in the field'],
     ['BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES', 'not a property of this program: the scan now recovers the two emission shapes measured on this toolchain, and an image lowered differently still reports nothing located'],
-    ['DANGER_RANKING_UNMEASURED_INPUTS', 'not a property of this program: no probe of it can read a multisig threshold, price a token, or know when an ecosystem event happened, and "first upgrade" means first upgrade Dot kept a state file for'],
+    ['DANGER_RANKING_UNMEASURED_INPUTS', 'not a property of this program: no probe of it can read a multisig threshold or a signer set\'s age, name a mixer, price a token, or know when an ecosystem event happened, and "first upgrade" means first upgrade Dot kept a state file for'],
   ];
   for (const [code, why] of construction) rows.push(row(code, 'by_construction', why));
 

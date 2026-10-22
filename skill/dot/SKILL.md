@@ -92,18 +92,30 @@ different bytes) and the run halted — that is not a statement about the progra
 
 **The tier is not the ranking, and the ranking is not a verdict.** Every report carries both numbers:
 `tier`/`score` from `scoreRisk()` is *exposure* — how much blast radius Dot was permitted to see — while
-`danger` from `src/score/danger.ts` is a *queue position* for this one upgrade, 0–100 over authority
-posture (40), code delta (30), blast radius (30) and behavioural anomaly (20). They disagree routinely
+`danger` from `src/score/danger.ts` is a *queue position* for this one upgrade, 0–100 over four
+queue axes (authority posture 40, code delta 30, blast radius 30, behavioural anomaly 20) and three
+malice-signature axes (authority integrity 30, code anomaly 20, timing anomaly 10). They disagree routinely
 and that is the point: a dull-looking program held by one key can be P3 by sampled exposure and CRITICAL
-by posture. Read `danger.category` to decide when to look, never whether the program is safe. Three
+by posture. Read `danger.category` to decide when to look, never whether the program is safe. Several
 inputs the model would want are not obtainable from chain data and the axis prints them in its own
 `notAssessed` line rather than approximating: a multisig's **threshold** (Dot does not decode the
-multisig account, so 1-of-2 and 5-of-9 both score 25, at the alarming end and labelled as an assumption),
+multisig account, so 1-of-2 and 5-of-9 both score 25 on the queue axis and `null` on the integrity axis,
+at the alarming end and labelled as an assumption), a **stale signer set** (no signer-set age is read),
+**mixer provenance** (this build ships no mixer list, so `--suspect` is the only route to that band),
 **proximity to an ecosystem event** (no feed exists, so that +10 has never been awarded), and routed
 **token value** (the graph records which mints were touched, never how much, so the ×2 multiplier is
-lamports-only). The axes sum to 120 and the score clamps to 100: keep `rawScore` in view, because
+lamports-only). The axes sum to 180 and the score clamps to 100: keep `rawScore` in view, because
 100/100 can mean "several axes maxed out" or "the arithmetic ran out of room", and those are different
 facts about the program.
+
+**`danger.malice.flagged` is a routing instruction, not a finding.** When it is true the report prints
+`VERDICT: SUSPECTED_MALICIOUS` with the axis points, the gate and the evidence under it. Quote those to
+the human — never the label alone — and never restate it as an accusation about a person: the gate wants
+an overall score ≥ 90 *and* positive evidence (integrity at its 30 band from observed funding, or an
+undeclared selector), because the brief's literal gate fired on ordinary upgrades. `unscannable`,
+`unverified` and an unrun `--check-funding` are absences of looking, and the heuristic is built so they
+cannot mint a scream. An honest team with a fresh ops wallet and a stale IDL produces the same signature
+as an attacker; say that in the same breath as you report the flag.
 
 ## What the agent will do that a script will not
 
@@ -138,7 +150,7 @@ hardest: `HISTORY_RETENTION` (public endpoints retain days; the fix is an archiv
 `VALUE_IS_PROXY` (routed lamports are a per-transaction upper bound, never TVL, never per-leg),
 `PDA_HOLDINGS_NOT_ENUMERATED` (custody is invisible without a seed list), `NO_IDL_CONTRACT` (no
 mandatory interface, so semantics may be unreadable), `SINGLE_NODE_TRUST` (one endpoint is one point of
-view), and `NO_MALICE_DETECTION` (a tier is a queue position, not a verdict).
+view), and `NO_MALICE_DETECTION` (a tier is a queue position, and the malice scream is a routed human, not a verdict).
 
 `references/live-run-2026-10-21.json` is a real report from a real endpoint that refused history.
 Read it before trusting a clean one: it is the empty-scan example, and it is deliberately in here so an

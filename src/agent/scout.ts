@@ -10,7 +10,8 @@ import { resolveAccountKeys } from '../graph/keys.js';
 import type { SolanaClient } from '../rpc/client.js';
 import type { WireSignatureInfo } from '../rpc/wire.js';
 import { diffBytecode, renderBytecodeDiff, type BytecodeDiff } from '../state/bytecodeDiff.js';
-import { scoreDanger, type DangerInputs } from '../score/danger.js';
+import { scoreDanger, type DangerInputs, type TimingReference } from '../score/danger.js';
+import { probeAuthorityFunding, type FundingProbeResult } from './funding.js';
 import type { BlockBatcher, IngestSummary } from '../graph/batcher.js';
 import { classifyAuthority, deriveProgramData, decodeProgramData } from '../state/programdata.js';
 import { BudgetExhaustedError, DotError, describeError, isDotError } from '../errors.js';
@@ -24,6 +25,13 @@ export type PriorDigest = {
   knownDependents: number;
   lamportsRouted: number;
   tier: string;
+  /**
+   * Times at which Dot previously *observed* an upgrade of this program, newest not guaranteed.
+   * It is Dot's own observation history, not the chain's: a program upgraded a hundred times before
+   * Dot was pointed at it has an empty list, and the cadence band of the danger ranking treats that
+   * as unmeasured rather than as "never upgraded".
+   */
+  upgradesAt?: number[];
 };
 
 /** The sample the risk warranted; falls back to the planned size when unknown. */
@@ -40,6 +48,12 @@ export type ActResult = {
   fetchErrors: number;
   stoppedReason: string | null;
   spanDays: number | null;
+  /**
+   * Block time of the newest transaction the sample actually saw, in unix ms. Null when no sampled
+   * transaction carried one. The malice timing axis prefers this over "now", because "did this upgrade
+   * land near governance activity" is a question about the upgrade's moment, not the operator's clock.
+   */
+  newestBlockTimeMs: number | null;
   budgetLimited: boolean;
   duplicates: number;
   ingest: IngestRecord;
@@ -129,6 +143,23 @@ export type ScoutOptions = {
   usdPerSol?: number | null;
   /** True when `--state` is in use, which is what makes "no prior digest" mean anything. */
   stateFileUsed?: boolean;
+  /**
+   * Spend a few RPC calls on the authority's own funding history. Off by default: the analysis does
+   * not need it, and a ranking that quietly issues extra reads against the operator's endpoint is a
+   * ranking nobody can budget.
+   */
+  checkFunding?: boolean;
+  /** Operator-named suspect funding sources. Dot ships no list of its own — without these, the
+   *  `flagged_source` state is unreachable and the +30 band can only come from observed freshness. */
+  suspectAddresses?: string[];
+  /** A governance program to check proximity against. Nothing is inferred without one. */
+  governanceProgram?: string;
+  /** An operator-declared incident time (unix ms). Dot has no incident feed. */
+  incidentAtMs?: number | null;
+  /** A multisig threshold the operator knows and Dot cannot read. */
+  declaredThreshold?: { m: number; n: number } | null;
+  /** A timelock on the authority, declared. Not derivable from chain data. */
+  timelockDeclared?: boolean;
   /** Max transitive depth reported; deep graphs are mostly re-exports of the same DEX. */
   maxDepth?: number;
 };
@@ -352,6 +383,44 @@ export class Scout {
     if (!built.budgetLimited) this.stoppedAt = 'report';
     this.o.budget.stop(built.budgetLimited ? 'budget exhausted during act' : undefined);
     const narrative = await this.maybeNarrate(ctx, built.graph);
+
+    // Malice-signature evidence, opt-in because each piece buys calls the analysis did not need.
+    // Refused or empty reads become `unverified`, never a clean score — see src/agent/funding.ts.
+    let funding: FundingProbeResult | null = null;
+    if (this.o.checkFunding && ctx.authority.after && (ctx.authority.posture === 'eoa' || ctx.authority.posture === 'multisig')) {
+      funding = await probeAuthorityFunding(this.o.client, {
+        authority: ctx.authority.after,
+        suspectAddresses: new Set(this.o.suspectAddresses ?? []),
+      });
+      this.mark('evaluate', `authority funding probe: ${funding.evidence.state} (${funding.callsSpent} call(s), ${funding.signaturesSeen} signature(s) listed)`);
+      this.ledger.add({
+        kind: funding.evidence.state === 'unverified' || funding.evidence.state === 'established' ? 'limit' : 'edge',
+        summary: `authority funding ${funding.evidence.state}: ${funding.evidence.detail}`,
+        ref: { program: ctx.program, from: ctx.authority.after ?? undefined },
+      });
+    }
+    let governanceGapMs: number | null = null;
+    // "When did this upgrade happen", as far as this run is able to tell. A watcher knows the moment it
+    // saw the account move; a one-off `analyze` of a dormant program knows only the newest transaction
+    // it managed to sample; and when it knows neither, the only clock left is the operator's — which is
+    // the case that must not be allowed to silently read as "this upgrade is recent".
+    const reference: { ms: number; source: TimingReference } =
+      typeof req.event?.detectedAt === 'number'
+        ? { ms: req.event.detectedAt, source: 'watcher-detected' }
+        : built.newestBlockTimeMs !== null
+          ? { ms: built.newestBlockTimeMs, source: 'newest-observed-trace' }
+          : { ms: Date.now(), source: 'analysis-clock' };
+    if (this.o.governanceProgram) {
+      try {
+        const sigs = await this.o.client.getSignaturesForAddress(this.o.governanceProgram, { limit: 5 });
+        const times = sigs.map((x) => x.blockTime).filter((t): t is number => typeof t === 'number');
+        if (times.length > 0) governanceGapMs = Math.min(...times.map((t) => Math.abs(reference.ms - t * 1000)));
+        this.mark('evaluate', `governance proximity: ${governanceGapMs !== null ? Math.round(governanceGapMs / 60_000) + ' minute(s) to the nearest listed signature' : 'no block times returned'} (reference: ${reference.source})`);
+      } catch (e) {
+        this.ledger.add({ kind: 'limit', summary: `governance proximity unmeasured: getSignaturesForAddress on ${this.o.governanceProgram} failed: ${(e as Error).message}`, ref: { program: ctx.program } });
+      }
+    }
+    const incidentGapMs = typeof this.o.incidentAtMs === 'number' ? Math.abs(reference.ms - this.o.incidentAtMs) : null;
     // Report the stage the run actually ended at, and the reason `act` recorded,
     // instead of a hardcoded "report/completed" that would describe a plan that
     // was never finished as one that was.
@@ -365,6 +434,7 @@ export class Scout {
       this.stoppedAt,
       built.stoppedReason ?? 'completed',
       narrative,
+      { funding, governanceGapMs, incidentGapMs, reference },
     );
   }
 
@@ -700,6 +770,7 @@ export class Scout {
       fetchErrors: errors,
       stoppedReason,
       spanDays,
+      newestBlockTimeMs: newestBlockTime !== null ? newestBlockTime * 1000 : null,
       budgetLimited,
       duplicates,
       ingest,
@@ -839,6 +910,7 @@ export class Scout {
     stoppedAt: DotReport['stoppedAt'],
     stopNote: string,
     narrative?: DotReport['narrative'],
+    malice?: { funding: FundingProbeResult | null; governanceGapMs: number | null; incidentGapMs: number | null; reference?: { ms: number; source: TimingReference } },
   ): DotReport {
     const limits: LimitNote[] = limitsFor({
       pruned: built?.pruned ?? 0,
@@ -864,6 +936,9 @@ export class Scout {
                 instruction: a.instruction,
                 addedSigner: a.added.filter((x) => x.signer).map((x) => x.name),
                 addedWritable: a.writableNonSigner,
+                // `added` is a brand-new instruction, which codeDelta already counts as change
+                // magnitude; widening an instruction that already existed is the anomaly signal.
+                existing: a.status === 'accounts_changed',
               })),
           }
         : null,
@@ -882,6 +957,24 @@ export class Scout {
         ctx && ctx.history.lastAnalysisAt !== null
           ? { priorDigestAt: new Date(ctx.history.lastAnalysisAt).toISOString(), stateFileUsed: this.o.stateFileUsed ?? true }
           : { priorDigestAt: null, stateFileUsed: this.o.stateFileUsed ?? false },
+      integrity: ctx
+        ? {
+            funding: malice?.funding?.evidence ?? null,
+            declaredThreshold: this.o.declaredThreshold ?? null,
+            timelockDeclared: this.o.timelockDeclared ?? false,
+            fundingProbe: malice?.funding ? { callsSpent: malice.funding.callsSpent, signaturesSeen: malice.funding.signaturesSeen } : null,
+            suspectAddressesSeen: this.o.suspectAddresses?.length ?? 0,
+          }
+        : null,
+      timing: ctx
+        ? {
+            priorUpgradeTimesMs: this.o.prior?.get(program)?.upgradesAt ?? [],
+            upgradeTimeMs: malice?.reference?.ms ?? Date.now(),
+            upgradeTimeSource: malice?.reference?.source ?? 'analysis-clock',
+            governanceGapMs: malice?.governanceGapMs ?? null,
+            incidentGapMs: malice?.incidentGapMs ?? null,
+          }
+        : null,
     };
     const danger = scoreDanger(dangerInputs);
 

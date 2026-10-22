@@ -130,9 +130,10 @@ describe('submission document', () => {
 
   it('carries the live-verification and design-decision sections, and says what it deviated on', () => {
     const headings = [...DOC.matchAll(/^## (\d+)\. (.+)$/gm)].map((m) => `${m[1]}. ${m[2]}`);
-    expect(headings).toHaveLength(9);
+    expect(headings).toHaveLength(10);
     expect(headings.join('\n')).toMatch(/8\. Live verification/);
     expect(headings.join('\n')).toMatch(/9\. Design decisions/);
+    expect(headings.join('\n')).toMatch(/10\. Malice Detection/);
     // The deviation from the brief has to be stated, not quietly implemented differently:
     // the brief asked for "best effort, low confidence" for non-Anchor programs, and this
     // build separates semantic confidence from evidence confidence instead.
