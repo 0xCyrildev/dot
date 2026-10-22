@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Buffer } from 'node:buffer';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import base58 from 'bs58';
 import { PublicKey } from '@solana/web3.js';
 import {
@@ -175,6 +177,74 @@ describe('yellowstone wire format (protobuf level)', () => {
     const slotOnly = encodeUpdate({ filters: ['x'], createdAt: undefined, slot: { slot: '1', status: 0 } } as unknown as SubscribeUpdate);
     expect(slotOnly.length).toBeGreaterThan(0);
     expect(decodeUpdate(slotOnly).filters).toEqual(['x']);
+  });
+});
+
+describe('the committed frame artifact — test/fixtures/yellowstone-frame.bin', () => {
+  /**
+   * What this file is, stated precisely, because the limit code depends on the distinction:
+   * it is **not** bytes a Geyser provider sent Dot. It is the bytes the package's own codec
+   * produces for an account mainnet *did* serve — the captured LBUZ `ProgramData` head from
+   * `programdata-observed.json` — so the message shape is evidence while the transport is not.
+   * Regenerate with `npx tsx scripts/gen-geyser-frame.ts`; `GRPC_LIVE_PATH_UNREACHABLE` stays
+   * NARROWED until some endpoint delivers a frame of its own.
+   */
+  const BIN = join(__dirname, 'fixtures', 'yellowstone-frame.bin');
+  const committed = () => Buffer.from(readFileSync(BIN));
+
+  it('is byte-identical to what the codec produces for the captured account', () => {
+    expect(existsSync(BIN), 'the artifact is the claim; run scripts/gen-geyser-frame.ts').toBe(true);
+    const bytes = committed();
+    expect(bytes.length).toBeGreaterThan(REAL_BYTES.length);
+    // Protobuf, not a blob someone typed: field 1 (filters), length 6, "loader".
+    expect([...bytes.subarray(0, 8)]).toEqual([0x0a, 0x06, ...Buffer.from('loader')]);
+    expect(bytes).toEqual(Buffer.from(encodeUpdate(frameFor({ address: REAL.programData, data: REAL_BYTES }))));
+  });
+
+  it('is decoded by the feed from disk bytes, with no re-encoding in the path', async () => {
+    const stream = new RawByteStream();
+    const feed = await feedOver(stream);
+    const seen: AccountUpdate[] = [];
+    feed.on('account', (u: AccountUpdate) => seen.push(u));
+    // `data` is what a socket would deliver: the file's bytes, verbatim.
+    stream.emit('data', committed());
+    await Promise.resolve();
+
+    expect(seen).toHaveLength(1);
+    const u = seen[0]!;
+    expect(u.kind).toBe('programdata');
+    expect(u.address).toBe(REAL.programData);
+    expect(u.data.equals(REAL_BYTES)).toBe(true);
+    expect(u.lamports).toBe(12_633_600n);
+    expect(u.writeVersion).toBe(4471n);
+    const state = decodeProgramData({ address: u.address, lamports: Number(u.lamports), owner: BPF_LOADER_UPGRADEABLE, data: u.data }, u.address);
+    expect(state.authority).toBe(REAL.expect.authority);
+  });
+
+  it('counts an undecodable frame and stays subscribed to the stream', async () => {
+    // Measured before this test existed: a truncated frame threw `RangeError: premature EOF`
+    // out of the data handler, which takes a daemon down mid-watch — and a dead watcher emits
+    // no error, it simply stops reporting upgrades. So the bad frame must be counted, not
+    // fatal, and the *next* frame must still arrive.
+    const bytes = committed();
+    const stream = new RawByteStream();
+    const feed = await feedOver(stream);
+    const seen: AccountUpdate[] = [];
+    const dropped: Array<{ reason: string }> = [];
+    feed.on('account', (u: AccountUpdate) => seen.push(u));
+    feed.on('malformed', (d: { reason: string }) => dropped.push(d));
+
+    stream.emit('data', bytes.subarray(0, 20));
+    expect(seen).toHaveLength(0);
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]!.reason).toMatch(/premature EOF|decode/i);
+    expect(feed.statsView().malformed).toBe(1);
+
+    stream.emit('data', bytes);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.address).toBe(REAL.programData);
+    // Counted as malformed, and never mistaken for an upgrade of an empty program.
+    expect(feed.statsView().updates).toBe(1);
   });
 });
 

@@ -39,7 +39,7 @@ export const LIMIT_STATUS: LimitStatus[] = [
     code: 'NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION',
     state: 'NARROWED',
     change:
-      'src/rpc/yellowstone.ts subscribes by owner over Geyser, so every ProgramData write on the cluster can be observed with no target list and no JSON-RPC polling. The wire format is proven against real captured ProgramData bytes and the connect/subscribe sequence is now correct.',
+      'src/rpc/yellowstone.ts subscribes by owner over Geyser, so every ProgramData write on the cluster can be observed with no target list and no JSON-RPC polling. The wire format is proven against real captured ProgramData bytes — committed as `test/fixtures/yellowstone-frame.bin` and decoded from disk by the suite — and the connect/subscribe sequence is now correct.',
     remains:
       'The transport has never received a frame from a provider: no credential exists on this box, and six endpoints probed without one all failed with one opaque native string (docs/blocked.md §3). Core JSON-RPC still cannot do this either way, and the live test in test/yellowstone-live.test.ts is skipped rather than passing when YELLOWSTONE_ENDPOINT is unset — so calling this RESOLVED would rest a green label on a file whose decisive test did not run.',
     tests: ['test/transports.test.ts', 'test/yellowstone-live.test.ts'],
@@ -85,9 +85,9 @@ export const LIMIT_STATUS: LimitStatus[] = [
     code: 'GRPC_LIVE_PATH_UNREACHABLE',
     state: 'NARROWED',
     change:
-      'Raw protobuf frames built with the package’s own generated codec, carrying a captured mainnet ProgramData account, are decoded by the feed and still yield the correct upgrade authority; the feed now opens the channel before it subscribes (measured: without `connect()` the v9 client throws locally in ~1ms with a message that reads like a provider outage) and bounds a connect that never settles. The message shape is no longer assumed.',
+      'The message shape is no longer assumed and it is now a committed artifact: `test/fixtures/yellowstone-frame.bin` is what the package’s own codec produces for a captured mainnet ProgramData account, and the suite decodes it from disk byte-for-byte (regenerate with `npx tsx scripts/gen-geyser-frame.ts`). The feed opens the channel before it subscribes (measured: without `connect()` the v9 client throws locally in ~1ms with a message that reads like a provider outage), bounds a connect that never settles, and survives a frame it cannot decode — measured 2026-10-22, a truncated frame threw `premature EOF` out of the data handler, which kills a watcher silently instead of noisily; it is now counted in `statsView().malformed` with the reason kept.',
     remains:
-      'No provider has ever delivered a frame to this build. Six Geyser hostnames probed 2026-10-21 without a token; every failure surfaced as the same one opaque native string, and the control against a host with no Geyser service at all produced the identical text — so auth-missing, service-absent and filter-refused are indistinguishable from the client side. isReplay, keepalive and reconnect remain unexercised in the field, as does `--authority` server-side filtering against a real node.',
+      'No provider has ever delivered a frame to this build. Re-probed 2026-10-22 (`npx tsx scripts/probe-geyser.ts`): two hosts refused at `stage: subscribe`, three resolved the subscribe and sent nothing for a full minute, and a host with no Geyser service at all behaved exactly like the silent three — as did rpcpool with an obviously invalid token. So auth-missing, service-absent and filter-matches-nothing are three-way indistinguishable from the client, and a `connected: true` with flat `updates` is not evidence of a live feed. isReplay, keepalive and reconnect remain unexercised in the field, as does `--authority` server-side filtering against a real node.',
     tests: ['test/yellowstone-live.test.ts'],
     fix: 'Set YELLOWSTONE_ENDPOINT (and YELLOWSTONE_TOKEN) to run the gated live test, then read feed.statsView() against a real stream. docs/blocked.md §3 has the hostnames and the reproduction command.',
   },

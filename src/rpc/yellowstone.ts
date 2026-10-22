@@ -75,8 +75,17 @@ export type FeedStats = {
   programPointer: number;
   /** Updates whose bytes did not match any layout Dot measured. Counted, never hashed. */
   layoutMismatch: number;
+  /**
+   * Frames that arrived on the wire and could not be decoded at all — truncated, or from a
+   * schema this client does not speak. Counted and skipped: one bad frame must not end the
+   * subscription, because a daemon that dies on malformed input is a daemon that silently stops
+   * seeing upgrades, which is the failure this whole transport exists to avoid.
+   */
+  malformed: number;
   startupSkipped: number;
   errors: number;
+  /** The reason of the most recent frame that would not decode, or null if none has been dropped. */
+  lastMalformedReason: string | null;
 };
 
 export type YellowstoneOptions = {
@@ -136,13 +145,17 @@ export class YellowstoneUpgradeFeed extends EventEmitter {
   private readonly commitment: CommitmentLevel;
   private stream: Awaited<ReturnType<GeyserLike['subscribe']>> | null = null;
   private running = false;
-  private readonly stats: FeedStats = {
+  /** The most recent undecodable frame's reason, kept for the operator-facing line. */
+  private lastMalformedReason: string | null = null;
+  // The reason string is assembled in statsView(), so the counters themselves stay a plain record.
+  private readonly stats: Omit<FeedStats, 'lastMalformedReason'> = {
     connected: false,
     updates: 0,
     programdata: 0,
     buffer: 0,
     programPointer: 0,
     layoutMismatch: 0,
+    malformed: 0,
     startupSkipped: 0,
     errors: 0,
   };
@@ -203,7 +216,7 @@ export class YellowstoneUpgradeFeed extends EventEmitter {
   }
 
   statsView(): FeedStats {
-    return { ...this.stats };
+    return { ...this.stats, lastMalformedReason: this.lastMalformedReason };
   }
 
   async start(): Promise<void> {
@@ -293,7 +306,18 @@ export class YellowstoneUpgradeFeed extends EventEmitter {
    * assumed by the type of the injected fake.
    */
   ingest(payload: SubscribeUpdate | Uint8Array): void {
-    this.handle(isBytes(payload) ? decodeUpdate(payload) : payload);
+    let update: SubscribeUpdate;
+    try {
+      update = isBytes(payload) ? decodeUpdate(payload) : payload;
+    } catch (e) {
+      this.stats.malformed++;
+      // The reason is kept, not swallowed: "premature EOF" and "unknown wire type" are
+      // different problems — a truncated stream from a provider versus a schema Dot does not speak.
+      this.lastMalformedReason = (e as Error)?.message ?? 'undecodable frame';
+      this.emit('malformed', { reason: this.lastMalformedReason, at: Date.now() });
+      return;
+    }
+    this.handle(update);
   }
 
   private handle(update: SubscribeUpdate): void {

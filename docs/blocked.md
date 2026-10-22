@@ -101,7 +101,7 @@ Still not done:
 report, including the `-32015` refusal: an honest failure is better evidence than a
 convenient success.
 
-## 3. Yellowstone gRPC against a live provider — BLOCKED (no token), but the probe found a bug in Dot
+## 3. Yellowstone gRPC against a live provider — NO FRAME RECEIVED, and the probe found two bugs in Dot
 
 `GRPC_LIVE_PATH_UNREACHABLE`. Renamed from `GRPC_LIVE_PATH_MOCKED` because probing it
 discovered the old label described the test rather than the world.
@@ -132,27 +132,56 @@ Two more defects surfaced by the same probe, both now covered:
 
 ### What is still blocked: nobody has ever sent Dot a frame
 
-Six hostnames, no token (this box has no Geyser credentials of any kind):
+Six hostnames plus one control, no token (this box has no Geyser credentials of any kind).
+Re-measured **2026-10-22** through Dot's own feed with `npx tsx scripts/probe-geyser.ts`, after the
+`connect()` fix, with the subscription held open 60 s on the first group:
 
 | endpoint | ms | outcome |
 |---|---:|---|
-| `https://api.rpcpool.com` | 2509 | subscribed, then stream error `subscribe stream receive failed` |
-| `https://mainnet.rpcpool.com` | 6753 | same |
-| `https://grpc.mainnet.rpcpool.com` | 1412 | same |
-| `https://solana-grpc.publicnode.com` | 1140 | `subscribe refused: failed to open subscribe stream` |
-| `https://grpc.publicnode.com` | 1043 | same |
-| `https://mainnet.helius-rpc.com` | 25001 | no settle; the bounded connect/subscribe path reported the timeout |
+| `https://api.rpcpool.com` | 61337 | **subscribe resolved**, then silence — no frame, no error |
+| `https://mainnet.rpcpool.com` | 80487 | same |
+| `https://grpc.mainnet.rpcpool.com` | 60796 | same |
+| `https://solana-grpc.publicnode.com` | 5918 | `stage=subscribe`, cause `failed to open subscribe stream` |
+| `https://grpc.publicnode.com` | 11028 | same |
+| `https://mainnet.helius-rpc.com` | 37204 | same |
+| `https://api.mainnet-beta.solana.com` *(control — serves JSON-RPC, has no Geyser service)* | 13176 | **subscribe resolved**, then silence |
 
-The control that turns this into a documented limit instead of a diagnosis: **a host with no
-Geyser service at all, `https://api.mainnet-beta.solana.com`, produced the identical string**
-(`subscribe stream receive failed`), as did an unfiltered subscribe against rpcpool. The
-native client collapses missing token, absent service and refused filter into one opaque
-message, so Dot cannot tell those apart from the client side and does not pretend to. An
-unresolvable host is distinguishable — that fails at `stage: connect` in 88 ms.
+The 2026-10-21 table recorded `subscribe stream receive failed` from rpcpool. Today the same hosts
+**accept the subscription and send nothing**, which is a worse failure to operate against: `start()`
+resolving is not evidence of a live feed, and there is no error to react to.
+
+The control that turns this into a documented limit instead of a diagnosis, now three-way. Asking
+rpcpool with no token, with an obviously invalid token (`YELLOWSTONE_TOKEN=not-a-real-token-000`),
+and asking a host that has no Geyser service at all produce **byte-for-byte the same behaviour**: a
+subscribe that resolves and a stream that never delivers. So from the client side Dot cannot
+distinguish *not authenticated* from *wrong host* from *filter matches nothing* — and an unfiltered
+subscribe against rpcpool behaves the same way again. The only state it *can* tell apart is DNS/TLS,
+which fails at `stage: connect` in ~88 ms.
+
+Two more things this probe is honest about:
+
+- **The committed artifact is not a received frame.** `test/fixtures/yellowstone-frame.bin` (158 B,
+  regenerate with `npx tsx scripts/gen-geyser-frame.ts`) is what the package's own codec produces for
+  an account mainnet *did* serve — the captured LBUZ `ProgramData` head. `test/yellowstone-live.test.ts`
+  decodes it off disk, byte-identical to the codec's output, and recovers the authority the chain
+  reported. The wire format is therefore evidence; the transport is not.
+- **A malformed frame used to be fatal.** While testing that artifact, a truncated frame threw
+  `RangeError: premature EOF` out of the stream's data handler — a watcher that dies quietly stops
+  reporting upgrades and reports nothing in its place. The feed now counts such frames
+  (`statsView().malformed`, reason kept in `lastMalformedReason`), keeps the subscription open, and
+  processes the next frame normally. Pinned by `counts an undecodable frame and stays subscribed`.
 
 Reproduce:
 
 ```bash
+# the six hostnames + the control, through Dot's own feed
+npx tsx scripts/probe-geyser.ts
+PROBE_ONLY=rpcpool.com PROBE_WAIT_MS=60000 npx tsx scripts/probe-geyser.ts
+YELLOWSTONE_TOKEN=anything PROBE_ONLY=rpcpool.com,mainnet-beta npx tsx scripts/probe-geyser.ts
+
+# regenerate the committed frame artifact from the captured mainnet account
+npx tsx scripts/gen-geyser-frame.ts
+
 # gated live test; skips without the endpoint rather than passing vacuously
 YELLOWSTONE_ENDPOINT=https://<your-geyser> YELLOWSTONE_TOKEN=<token> \
   npx vitest run test/yellowstone-live.test.ts
@@ -162,10 +191,11 @@ node dist/cli/index.js watch --yellowstone https://<your-geyser> --token <token>
   --targets targets.example.json --once
 ```
 
-Read `feed.statsView()`: `updates` must rise, `startupSkipped` should be non-zero on a
-replay, `layoutMismatch` should stay near zero. A flat `updates` with no error is a filter
-that matches nothing — not a quiet chain. `isReplay`, keepalive and reconnect stay
-unexercised until that run happens.
+Read `feed.statsView()`: `updates` must rise, `startupSkipped` should be non-zero on a replay,
+`layoutMismatch` should stay near zero, `malformed` should stay 0 against a real provider. A flat
+`updates` with `connected: true` and no error is now *known* to be indistinguishable from a
+no-Geyser host, so it is not evidence of a quiet chain — it is the signature this section is about.
+`isReplay`, keepalive and reconnect stay unexercised until an endpoint with a real token answers.
 
 ## 4. Bytecode diff validated against real compiled Anchor bytecode — MEASURED, REFUTED, THEN FIXED
 
