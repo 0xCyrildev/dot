@@ -173,12 +173,28 @@ discarded as an unmatched candidate, and an instruction the new IDL declares tha
 the image is reported as unconfirmed instead of being quietly called removed. Where there is no IDL,
 or no prior image in the vault, the diff says `bytecode_only`/`partial` and refuses to name an
 instruction at all — because RPC has no historical account state, the "before" side only exists if
-Dot was watching.
+Dot was watching. **And where the scan itself is blind, it now says so:** measured against real
+compiler-emitted SBF, discriminators are not contiguous bytes, so a diff that locates none of the
+declared selectors reports `confidence: "unscannable"` and rewords every "declared but not found"
+as "not seen" rather than "not there" (§9, and `docs/blocked.md` §4 for the two images).
 
 The ranking model is stated rather than hidden: value is scored **linearly** (capped at the reference) and
 dependents **log-scaled**, so `$400M through 2 dependents` outranks `$40M through 14`. Log-scaling
 both axes — the obvious choice — inverts that, because it compresses a 10x value difference into noise and
 lets breadth win. `composite = valueScore × (1 + dependentsScore)` ships alongside every score.
+
+**The last thing a document cannot give you is per-program answers.** A README's limitations section says
+what is generally invisible; an operator asking "can I trust *this* number for *this* address" needs a
+different sentence. `dot limits --for <program>` spends about four reads and answers it: `applies`
+(observed here — the node refused `-32015` for this program, no IDL is reachable, the Program account
+names a different ProgramData than the one Dot would read), `probe_clean` (one probe found nothing wrong
+*at the point it touched* — a retrievable newest signature says nothing about where the retention window
+ends, and the evidence column says exactly that), `not_probed` (this run could not afford to look), and
+`by_construction` (a property of the source or of intent, which no probe of one program would change).
+Measured, on a program upgraded the same day: `docs/live-limits-for-2026-10-21.md` — 4 calls, 432,384
+bytecode bytes, `eoa` authority, 2 applies / 6 probed clean / 13 by construction. It answers
+`CPI_DEPTH_ATTRIBUTION` by looking for `stackHeight` in a transaction it just fetched, instead of quoting
+the specification at the reader.
 
 ## 5. What Dot does not see — in three states, not two
 
@@ -218,6 +234,19 @@ Detection is deterministic throughout. In `--mode real` a model reads the IDL de
 and writes an advisory — *what is the likely impact, what should those operators do* — with the four
 inputs it was given recorded in the output. It cannot set a tier, and an answer citing an evidence id Dot
 never issued is **discarded whole, not trimmed**, with the refusal printed.
+
+### Blocked, each with the command that would unblock it
+
+`docs/blocked.md` records four items. They are written as "here is how to do this on a machine
+that can", never as a shrug, because a blocked verification replaced by a plausible-looking
+substitute is how a tool like this ships a lie.
+
+| blocked item | what would close it | still true after closing it |
+|---|---|---|
+| [§1 npm publish](./blocked.md#1-publishing-zeroxcyrildot-to-npm--blocked-no-credentials) | registry credentials: `npm publish --access public`. Packaging, install and all six bins are already proven by `test/install.test.ts`, which packs the tarball and installs it into a throwaway prefix. | The `npx -y -p @zeroxcyril/dot` line in §6 becomes real instead of aspirational. |
+| [§2 live mainnet verification](./blocked.md#2-live-mainnet-verification--partly-unblocked-egress-returned-2026-10-21) | Already partly done: egress returned mid-session and `analyze`, `--verify`, `calibrate`, loader-index discovery and `--seeds` have all been run against mainnet. What remains is `blast-radius` at sweep scale and a second provider that is not another public endpoint. | Block retention is a property of the node, not of this session: the `-32015` refusal stands whatever else gets reachable. |
+| [§3 Yellowstone gRPC against a live endpoint](./blocked.md#3-yellowstone-grpc-against-a-live-provider--blocked-no-token-but-the-probe-found-a-bug-in-dot) | A token: `YELLOWSTONE_ENDPOINT=… YELLOWSTONE_TOKEN=… npx vitest run test/yellowstone-live.test.ts`, then `dot watch --yellowstone … --once` and read `feed.statsView()`. The probe already fixed the bug that made every attempt fail locally. | The native client still cannot distinguish a missing token from an absent service, so a *silent* filter still has to be caught by counting, not inferred. |
+| [§4 the bytecode diff against a compiled Anchor program](./blocked.md#4-bytecode-diff-validated-against-real-compiled-anchor-bytecode--measured-and-the-assumption-failed) | **Done, and it came back negative.** Both images now exist on this box and `test/bytecode.test.ts` runs against the committed one every time; the framework one is reproducible with the recorded command. Closing the *defect* needs a scanner that matches what LLVM emits, or IDL-only entrypoint reporting. | A contiguous scan locates 0/10 selectors in the hand-built-shape image and 0/6 in the anchor-lang image: Dot's entrypoint claims are proven on constructed images, not on compiled bytecode, and the diff now says `unscannable` instead of implying "nothing changed". |
 
 ## 6. MCP integration
 
@@ -303,10 +332,75 @@ than quoting the spec, and confirms the (program, programData) pair from the pro
 `live-limits-for-2026-10-21.md` is that output, from mainnet.
 
 **Re-measured, not inherited.** RPC egress came back on this box during this session, so
-`docs/blocked.md` §2 now records what has been run against mainnet and what has not: `calibrate` has
-still never measured a real block, `--seeds` has summed no live vault, the Geyser path has still never
-met a live endpoint, and the package is still unpublished (`E401`). The artifacts above are the
-measured ones; everything else stays labelled as the claim it is.
+`docs/blocked.md` was rewritten from measurement: what has now been run against mainnet, what was
+fixed as a result, and what still has never been exercised — the Geyser path has still never met a
+live endpoint, and the package is still unpublished (`E401`). The artifacts below are the measured
+ones; everything else stays labelled as the claim it is.
+
+## 8. Live verification
+
+Every artifact in this directory is machine-generated, from the command printed in it, against
+`api.mainnet-beta.solana.com` and `solana-rpc.publicnode.com` on 2026-10-21. None is a fixture
+handwritten to match the code that reads it.
+
+| artifact | command | what it establishes |
+|---|---|---|
+| [`live-verify-2026-10-21.json`](./live-verify-2026-10-21.json) / [`.md`](./live-verify-2026-10-21.md) | `dot analyze FuCKerMR… --secondary-rpc … --verify --verify-sample 4 --sample 8 --budget-rpc 60` | A real program, upgraded the same day, discovered through the loader index: 8 traces, 3 edges, 21 CPI occurrences (20 failed), `attributionQuality: logs`, tier P2 with `cappedBy` naming the 32% coverage, exit 4 carrying a priced hypothesis. `chain_verified: false`, with each check's verdict and reason. Reproduced at the same numbers on a second run. |
+| [`live-limits-for-2026-10-21.md`](./live-limits-for-2026-10-21.md) | `dot limits --for FuCKerMR… --try-onchain-idl --secondary-rpc …` | 4 RPC calls → 2 limits apply, 6 probed clean, 13 properties of the source. `CPI_DEPTH_ATTRIBUTION` answered by finding `stackHeight` in a fetched transaction rather than quoting the spec. |
+| [`live-seeds-2026-10-21.json`](./live-seeds-2026-10-21.json) / [`.md`](./live-seeds-2026-10-21.md) | `dot analyze FuCKerMR… --seeds seeds-live.json` | Custody swept live: 6 derived patterns → 5 read, 1 absent, 1 unresolved, in **one** `getMultipleAccounts` call; 1,042,041,147,090 lamports and 986,570,981,170 raw units of `So1111…1112`. The derived addresses reproduce the ones the captured transaction named, so the seed rule is checked against the chain. |
+| [`calibrated-model-2026-10-21.json`](./calibrated-model-2026-10-21.json) | `dot calibrate --blocks 6 --out docs/calibrated-model-2026-10-21.json` | The ingestion cost model measured rather than assumed: 506 transactions per block, 18,040 bytes per fetched transaction. Supplied to the analyzer it changes the reported byte amplification from 2000x to 506x. Two consecutive runs gave 506 and 687, which is why the file carries its endpoint and date. |
+| [`live-run-2026-10-21.json`](./live-run-2026-10-21.json) | `dot analyze LBUZ… --mode rules` (older session) | Kept because it is the honest failure case: `-32015` on every trace fetch, tier capped at P3 by coverage. A refusal, not a clean result. |
+| [`replay-pamm.txt`](./replay-pamm.txt) | `dot replay --fixture test/fixtures/tx-nested.json --target pAMM…` | The real parser, offline, on a captured mainnet transaction: depth-2 attribution, dependents and lamports, reproducible with no network. |
+
+What these runs also produced were four bug fixes, because a measurement can disagree with the tool:
+`start()` never opened the Geyser channel (every "provider refused" had been a local throw in ~1 ms);
+`connect()` could hang forever, stalling the watcher at startup; a dropped stream discarded the
+provider's reason; and `--out` died on `ENOENT` after spending the entire RPC budget. Each has a
+regression test, named in `docs/blocked.md`.
+
+## 9. Design decisions, including where they deviated from the brief
+
+**The hypothesis is assembled by the Scout after `act` and after the widen path, not by the rule
+engine.** The brief put it in `rules.ts`. It is not there, and putting it there would have made it a
+guess: at Decide time the engine has the authority posture and the bytecode diff, but not the
+attributed dependent count and not what else the same key controls — and those are exactly the fields
+the claim's `evidenceFor`/`evidenceAgainst` are made of. So `RuleBasedDecision` raises
+`needs_more_budget`, and `Scout` converts that into a claim once the sample exists. The reasoning is
+in a comment at the call site, because the plausible-looking wrong version (build the claim in
+Decide, where "the decision lives") is the one a reviewer would otherwise write.
+
+**`chain_verified: false` is printed, never hidden.** The temptation was to omit the flag when the
+cross-check could not conclude, since "no information" reads cleaner than a red `false`. But the
+measured reality is that most public-endpoint runs *cannot* reach same-slot agreement on a mutable
+account, so an absent flag would have meant "Dot did not look" and "Dot looked and could not tell"
+would be indistinguishable — the exact confusion this tool exists to prevent. The flag therefore
+ships with a per-check verdict, a reason that names which check to question, and `CANNOT_PROVE`
+attached, so it cannot be quoted as a consensus claim.
+
+**Non-Anchor programs are not downgraded to `low` confidence — they are denied semantics.** The brief
+asked for "best effort, low confidence". Confidence in this build answers one question — how much of
+the *evidence* was reachable — and is computed from sample coverage and attribution quality, so an
+IDL-less program with full trace coverage genuinely has a better-observed blast radius than an
+IDL-rich program whose history the node dropped. Fusing interface availability into confidence would
+rank *publishing an IDL* above *having reachable traces*, which is backwards for a dependency graph.
+Instead the diff carries its own axis (`confidence: structural | partial | bytecode_only`), refuses to
+name an instruction it cannot resolve from an IDL, and reports the semantic gap as
+`NO_IDL_CONTRACT` with `narrative.refused = "idl_unavailable"`. Two numbers, two meanings — the same
+separation that keeps `severity` and `confidence` apart.
+
+**Selector-level edges were built before the selectors were validated — and the validation
+failed.** Locating instruction discriminators in a bytecode image is the assumption under the
+"which entrypoints appeared, and who already calls them" result. It was tested against images the
+test itself assembled. This session compiled real SBF images with the Solana toolchain and scanned
+them: a 3,760-byte program whose dispatch has the shape `#[program]` generates yields **0 of 10**
+contiguous selectors (each present as a `mov32 imm32` + `hor64 imm32` pair eight bytes apart), and a
+244 KB program built against anchor-lang 0.30.1 yields **0 of 6** contiguous and **0 of 6** halves,
+its `match` lowering into a byte-wise compare tree. So the entrypoint diff is honest about which
+claim it can make: `confidence: "unscannable"` when nothing is located against a declared
+interface, `idlClaimedNotFound` reworded from "not there" to "not seen", and a carried hypothesis
+that cannot be *confirmed* by a scan that saw nothing. The scanner itself is still blind — that is
+the open defect in `docs/blocked.md` §4, and the fix is to match what LLVM emits or to stop
+scanning bytecode, not to relax the test that found it.
 
 ---
 

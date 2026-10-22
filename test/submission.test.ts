@@ -127,6 +127,64 @@ describe('submission document', () => {
     expect(DOC).toContain(`${counts.UNRESOLVABLE_IN_CODE} UNRESOLVABLE_IN_CODE`);
     expect(counts.RESOLVED + counts.NARROWED + counts.UNRESOLVABLE_IN_CODE).toBe(LIMIT_NOTES.length);
   });
+
+  it('carries the live-verification and design-decision sections, and says what it deviated on', () => {
+    const headings = [...DOC.matchAll(/^## (\d+)\. (.+)$/gm)].map((m) => `${m[1]}. ${m[2]}`);
+    expect(headings).toHaveLength(9);
+    expect(headings.join('\n')).toMatch(/8\. Live verification/);
+    expect(headings.join('\n')).toMatch(/9\. Design decisions/);
+    // The deviation from the brief has to be stated, not quietly implemented differently:
+    // the brief asked for "best effort, low confidence" for non-Anchor programs, and this
+    // build separates semantic confidence from evidence confidence instead.
+    expect(DOC).toMatch(/not downgraded to `low` confidence/);
+    expect(DOC).toMatch(/assembled by the Scout after `act`/);
+    expect(DOC).toMatch(/chain_verified: false` is printed, never hidden/);
+  });
+
+  it('names only artifacts and links that exist on disk', () => {
+    const docs = join(ROOT, 'docs');
+    const referenced = new Set<string>();
+    for (const m of DOC.matchAll(/\]\(\.\/([^)#]+)(?:#[^)]*)?\)/g)) referenced.add(m[1]!);
+    for (const m of DOC.matchAll(/`docs\/([A-Za-z0-9._-]+\.(?:json|md|txt))`/g)) referenced.add(m[1]!);
+    // Every artifact in the live-verification table, by name.
+    for (const name of [
+      'live-verify-2026-10-21.json',
+      'live-verify-2026-10-21.md',
+      'live-limits-for-2026-10-21.md',
+      'live-seeds-2026-10-21.json',
+      'live-seeds-2026-10-21.md',
+      'calibrated-model-2026-10-21.json',
+      'live-run-2026-10-21.json',
+      'replay-pamm.txt',
+      'blocked.md',
+      'lessons.md',
+    ]) {
+      referenced.add(name);
+    }
+    const missing = [...referenced].filter((f) => !existsSync(join(docs, f)));
+    expect(missing, `submission cites files that are not in docs/: ${missing.join(', ')}`).toEqual([]);
+    expect(referenced.size).toBeGreaterThanOrEqual(10);
+  });
+
+  it('links into blocked.md at headings that are still there', () => {
+    const blocked = readFileSync(join(ROOT, 'docs', 'blocked.md'), 'utf8');
+    // GitHub's anchor rule, as documented: lowercase, drop anything that is not a letter,
+    // digit, space or hyphen, then turn *each* remaining space into a hyphen. No collapsing:
+    // an em dash between two spaces leaves a double hyphen, which is the difference between
+    // a link that works and one that renders fine and goes nowhere.
+    const slug = (heading: string) =>
+      heading
+        .replace(/^#+\s*/, '')
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '')
+        .trim()
+        .replace(/ /g, '-');
+    const anchors = new Set([...blocked.matchAll(/^##+\s+(.+)$/gm)].map((m) => slug(m[1]!)));
+    const links = [...DOC.matchAll(/\]\(\.\/blocked\.md#([^)]+)\)/g)].map((m) => m[1]!).filter(Boolean);
+    expect(links.length).toBeGreaterThanOrEqual(4);
+    const broken = links.filter((a) => !anchors.has(a));
+    expect(broken, `blocked.md headings no longer match these anchors: ${broken.join(' | ')}`).toEqual([]);
+  });
 });
 
 describe('the documented MCP response is the real response', () => {
