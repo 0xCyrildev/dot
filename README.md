@@ -86,6 +86,7 @@ installs into a throwaway prefix, executes all six bins):
 npm pack                                                    # -> zeroxcyril-dot-1.0.0.tgz
 npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-1.0.0.tgz
 /tmp/dot-prefix/bin/dot-limits
+npm run verify-install     # or: build → pack → install into a throwaway prefix → exec all six bins
 ```
 
 On a box where the global prefix is not writable, `npm config set prefix ~/.npm-global` plus

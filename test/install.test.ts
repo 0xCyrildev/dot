@@ -22,6 +22,8 @@ const ROOT = join(__dirname, '..');
 const BINS = ['dot', 'dot-analyze', 'dot-watch', 'dot-mcp', 'dot-limits', 'dot-calibrate'];
 let prefix = '';
 let tarball = '';
+let scriptSummary = '';
+let scriptExit = -1;
 
 function npm(args: string[], env: Record<string, string> = {}): string {
   return execFileSync('npm', args, {
@@ -36,15 +38,34 @@ function npm(args: string[], env: Record<string, string> = {}): string {
 // This file used to run `npm install -g` inside two separate tests into the same prefix.
 // Each takes ~17s alone; under parallel suite load the second one blew a 240s test timeout,
 // which is a flake that reports a false failure against an installer that worked.
+// Install once, in the setup, by running the operator's script — not a second implementation of
+// the same steps in TypeScript. The suite and the person publishing from a terminal then cannot
+// drift apart, which is the only reason a release checklist is worth having.
 beforeAll(() => {
-  // Build first: the tarball packs dist/, so a stale dist would test stale bytes.
-  npm(['run', 'build']);
-  const out = npm(['pack', '--silent']);
-  const made = out.trim().split('\n').filter((l) => l.endsWith('.tgz'));
-  tarball = join(ROOT, made[made.length - 1]!.trim());
-  if (!existsSync(tarball)) throw new Error(`npm pack produced no tarball (got: ${out.slice(0, 200)})`);
   prefix = mkdtempSync(join(tmpdir(), 'dot-install-'));
-  npm(['install', '-g', '--no-audit', '--no-fund', tarball], { npm_config_prefix: prefix });
+  let stdout = '';
+  let err = '';
+  try {
+    stdout = execFileSync('bash', [join(ROOT, 'scripts', 'verify-install.sh'), '--from', 'tarball', '--keep', '--prefix', prefix], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      env: { ...process.env, NO_COLOR: '1', DOT_INSTALL_JSON: '1' },
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: 540_000,
+    });
+  } catch (e) {
+    err = `${(e as Error).message}\n${(e as { stdout?: string }).stdout ?? ''}`;
+  }
+  scriptExit = err ? 1 : 0;
+  scriptSummary = stdout;
+  if (err) throw new Error(`scripts/verify-install.sh failed — the install path is broken, not just this test:\n${err}`);
+  const json = (key: string) => stdout.split('\n').map((l) => l.trim()).find((l) => l.startsWith(`JSON ${key}=`))?.split('=')[1] ?? '';
+  tarball = json('tarball');
+  const reportedPrefix = json('prefix');
+  // The script installs into the prefix it was given; if it did not say so, the tests below would
+  // be reading a directory that nothing created.
+  if (reportedPrefix !== prefix) throw new Error(`verify-install.sh reported prefix ${reportedPrefix || '<none>'}, expected ${prefix}`);
+  if (!tarball || !existsSync(join(ROOT, tarball))) throw new Error(`verify-install.sh reported no tarball (got "${tarball}")`);
 }, 600_000);
 
 afterAll(() => {
@@ -53,6 +74,15 @@ afterAll(() => {
 });
 
 describe('packaged install', () => {
+  it('passes the operator script itself, and the script counted all six bins', () => {
+    // The script's own verdict, not a re-derivation: it must say it executed six bins and that
+    // they all reported the manifest version. A silent `--version` drift would fail here first.
+    expect(scriptExit).toBe(0);
+    expect(scriptSummary).toMatch(/^OK — 6\/6 bins executed and reported \d+\.\d+\.\d+; prefix /m);
+    for (const b of BINS) expect(scriptSummary, `the script never executed ${b}`).toContain(`✓ ${b} — `);
+    expect(scriptSummary).toMatch(/entry point .*dist\/cli\/index\.js mode \d+/);
+  });
+
   it('packs a tarball containing the dist and every bin target', () => {
     const listing = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' });
     expect(listing).toContain('package/dist/cli/index.js');

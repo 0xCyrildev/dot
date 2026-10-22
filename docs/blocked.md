@@ -12,11 +12,16 @@ Verified from outside the repo afterwards, in this order:
 
 ```bash
 npm view @zeroxcyril/dot version                      # 1.0.0
-rm -rf /tmp/dot-global
-npm install -g --prefix /tmp/dot-global @zeroxcyril/dot
-for b in dot dot-analyze dot-watch dot-mcp dot-limits dot-calibrate; do /tmp/dot-global/bin/$b --version; done
+bash scripts/verify-install.sh --from registry        # installs @zeroxcyril/dot@1.0.0 from npm
+bash scripts/verify-install.sh --from tarball         # build → pack → install the local artifact
 npx -y -p @zeroxcyril/dot dot-limits --status | head -1
 ```
+
+`scripts/verify-install.sh` is now the canonical form of that check, and `test/install.test.ts`
+drives the *script* rather than re-implementing the steps in TypeScript — the suite and the person
+publishing from a terminal walk one path, so a green test means the operator command works. Re-run
+2026-10-22: `OK — 6/6 bins executed and reported 1.0.0`, entry point `dist/cli/index.js mode 775`,
+in both `--from registry` and `--from tarball` modes.
 
 All six bins reported `1.0.0` from the registry-installed package, and the `npx` form printed
 `Limit status — 4 RESOLVED, 11 NARROWED, 7 UNRESOLVABLE_IN_CODE (22 codes)`, re-run 2026-10-22 after the bytecode recovery and the danger-ranking row landed (v1.0.0 printed 4/10/7 over 21 codes, and `docs/RELEASE-v1.0.0.md` keeps that older line as the release record). That is the evidence

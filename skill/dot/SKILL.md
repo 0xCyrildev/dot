@@ -27,9 +27,11 @@ npx -y -p @zeroxcyril/dot dot-limits --status    # no install at all
 ```
 
 From a clone, when the agent is meant to edit rather than only call it: `npm ci && npm run build`,
-then `node dist/cli/index.js analyze <PROGRAM_ID>`. Or `npm pack` and
-`npm install -g --prefix /tmp/<dir> ./zeroxcyril-dot-1.0.0.tgz`, which is the form
-`test/install.test.ts` verifies. If the global prefix is not writable - on the build box it resolves
+then `node dist/cli/index.js analyze <PROGRAM_ID>`. To check an install rather than assume one, run
+`npm run verify-install` — it builds, packs, installs into a throwaway prefix and **executes all six
+bins**, printing `OK — 6/6 bins executed and reported <version>` or the named failure; add
+`--from registry` to do the same against the published package. `test/install.test.ts` drives this
+same script, so the suite and the operator cannot drift. If the global prefix is not writable - on the build box it resolves
 to a `/usr/local/lib/node_modules` that does not exist - set one you own first:
 `npm config set prefix ~/.npm-global`. The bare bin is `dot`, which collides with graphviz; `dot-analyze`, `dot-watch`, `dot-mcp`,
 `dot-limits`, `dot-calibrate` do not. One alias quirk to know before scripting around it: an alias
