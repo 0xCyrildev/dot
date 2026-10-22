@@ -173,10 +173,15 @@ discarded as an unmatched candidate, and an instruction the new IDL declares tha
 the image is reported as unconfirmed instead of being quietly called removed. Where there is no IDL,
 or no prior image in the vault, the diff says `bytecode_only`/`partial` and refuses to name an
 instruction at all — because RPC has no historical account state, the "before" side only exists if
-Dot was watching. **And where the scan itself is blind, it now says so:** measured against real
-compiler-emitted SBF, discriminators are not contiguous bytes, so a diff that locates none of the
-declared selectors reports `confidence: "unscannable"` and rewords every "declared but not found"
-as "not seen" rather than "not there" (§9, and `docs/blocked.md` §4 for the two images).
+Dot was watching. **And where the scan cannot read the image, it says so instead of going quiet.**
+The contiguous-constant assumption was measured against compiler-emitted SBF, found false (0 of 10
+and 0 of 6 selectors are contiguous bytes), and then repaired: `src/state/sbfSelectors.ts` decodes
+`.text` and recovers **10 of 10** immediate-pair selectors and **6 of 6** compare-chain selectors on
+the two committed images, so entrypoint added/removed/undeclared claims are now demonstrated on
+framework-compiled bytecode and not only on constructed images. What remains blind is an emission
+shape the recovery has not been shown on, and that case still reports `confidence: "unscannable"`,
+still rewords "declared but not found" as *not seen*, and still cannot confirm a carried hypothesis
+by finding nothing (§9, and `docs/blocked.md` §4 for both images and the build commands).
 
 The ranking model is stated rather than hidden: value is scored **linearly** (capped at the reference) and
 dependents **log-scaled**, so `$400M through 2 dependents` outranks `$40M through 14`. Log-scaling
@@ -366,13 +371,17 @@ handwritten to match the code that reads it.
 | [`live-seeds-2026-10-21.json`](./live-seeds-2026-10-21.json) / [`.md`](./live-seeds-2026-10-21.md) | `dot analyze FuCKerMR… --seeds seeds-live.json` | Custody swept live: 6 derived patterns → 5 read, 1 absent, 1 unresolved, in **one** `getMultipleAccounts` call; 1,042,041,147,090 lamports and 986,570,981,170 raw units of `So1111…1112`. The derived addresses reproduce the ones the captured transaction named, so the seed rule is checked against the chain. |
 | [`calibrated-model-2026-10-21.json`](./calibrated-model-2026-10-21.json) | `dot calibrate --blocks 6 --out docs/calibrated-model-2026-10-21.json` | The ingestion cost model measured rather than assumed: 506 transactions per block, 18,040 bytes per fetched transaction. Supplied to the analyzer it changes the reported byte amplification from 2000x to 506x. Two consecutive runs gave 506 and 687, which is why the file carries its endpoint and date. |
 | [`live-run-2026-10-21.json`](./live-run-2026-10-21.json) | `dot analyze LBUZ… --mode rules` (older session) | Kept because it is the honest failure case: `-32015` on every trace fetch, tier capped at P3 by coverage. A refusal, not a clean result. |
+| [`live-danger-2026-10-22.md`](./live-danger-2026-10-22.md) | `dot analyze LBUZ… --sample 2 --budget-rpc 20 --sol-usd 150`, then the same with `--state` | The Upgrade Danger Ranking, live, twice on one program: **LOW 10/100** with two axes unmeasured, then **MODERATE 50/100** once a state file made the behavioural axis scoreable and a sample found one caller (1.7 SOL, 3 mints touched — reported as unusable for the ×2 multiplier, because the graph has no token amounts). The score moved because the evidence moved, which is the property the artifact exists to show. Not reproducible from the published 1.0.0: it postdates the release. |
 | [`replay-pamm.txt`](./replay-pamm.txt) | `dot replay --fixture test/fixtures/tx-nested.json --target pAMM…` | The real parser, offline, on a captured mainnet transaction: depth-2 attribution, dependents and lamports, reproducible with no network. |
 
-What these runs also produced were four bug fixes, because a measurement can disagree with the tool:
+What these runs also produced were five bug fixes, because a measurement can disagree with the tool:
 `start()` never opened the Geyser channel (every "provider refused" had been a local throw in ~1 ms);
 `connect()` could hang forever, stalling the watcher at startup; a dropped stream discarded the
-provider's reason; and `--out` died on `ENOENT` after spending the entire RPC budget. Each has a
-regression test, named in `docs/blocked.md`.
+provider's reason; `--out` died on `ENOENT` after spending the entire RPC budget; and a truncated
+Geyser frame threw out of the data handler, killing a watcher that then reported nothing at all —
+which is the worst silence a monitoring tool can produce. Each has a regression test, named in
+`docs/blocked.md`. Two of the five (the channel and the hang) were found by probing an endpoint that
+never answered; the malformed-frame one was found by writing a test artifact for the frame format.
 
 ## 9. Design decisions, including where they deviated from the brief
 
