@@ -17,14 +17,19 @@ import { existsSync, readFileSync } from 'node:fs';
 /**
  * Scope of what these tests can prove.
  *
- * They prove the derivation matches Anchor's published rule, that presence/absence of a
- * named 8-byte selector is detected correctly inside an image, and that the diff refuses
- * to overclaim when a side is missing. They do NOT prove that a real compiled Anchor
- * program lays its selectors out contiguously in `.rodata` — that needs a genuine `.so`,
- * and this environment cannot produce one: `cargo build-sbf` aborts with
- * `not a directory: ~/.cache/solana/v1.54/platform-tools/rust/lib` and the toolchain
- * bootstrap needs network egress that is blocked here (see docs/blocked.md). The gated
- * test at the bottom runs the moment someone with a real artifact sets DOT_TEST_SO.
+ * They prove the derivation matches Anchor's published rule, that a named selector is detected
+ * inside an image — as contiguous bytes, as a `mov32`+`hor64` immediate pair, or as a byte-wise
+ * compare chain — and that the diff refuses to overclaim when a side is missing or an image will
+ * not parse.
+ *
+ * Two genuine compiler-emitted ELFs are committed here, so the recovery claims are checkable
+ * without a toolchain: `fixtures/sbf-dispatch.so` (rustc 1.89.0-sbpf, platform-tools v1.54, a
+ * hand-written dispatch over ten `const DISCRIMINATOR: [u8; 8]`) and
+ * `fixtures/anchor-lang-0.30.1.so` (the same toolchain, six instructions through anchor-lang's own
+ * `#[program]` macro). Both were built on this box; docs/blocked.md §4 has the exact commands,
+ * including the `cargo build-sbf` bug that forces building the target directly. The gated test at
+ * the bottom of the real-program block runs the same scan against any artifact an operator points
+ * at with DOT_TEST_SO.
  */
 
 const NAMES = ['initialize', 'withdraw', 'deposit', 'close_account', 'set_authority'];
@@ -195,10 +200,11 @@ describe('validation against a real compiled program', () => {
    * [u8; 8]` per instruction, compared against the incoming data. Ten instructions, ten real
    * discriminators, one genuine compiler-emitted ELF.
    *
-   * The result refutes the contiguous-constant assumption: 0 of 10 selectors are present as
-   * 8 contiguous bytes, while 10 of 10 are present as two 4-byte immediates eight bytes
-   * apart. A scan looking for the former finds nothing in a real program. Asserting the old
-   * expectation ("> half located") would have meant deleting the finding to keep the green.
+   * The contiguous-constant assumption is refuted here and repaired in `sbfSelectors.ts`: 0 of 10
+   * selectors are present as 8 contiguous bytes, while 10 of 10 are present as two 4-byte
+   * immediates eight bytes apart (`mov32` low + SBF `hor64` high), and the scan recovers all ten
+   * from that pair. Asserting the old expectation ("> half located") would have meant deleting the
+   * finding to keep the green, so the blindness was pinned first, then fixed.
    */
   const REAL_SO = join(__dirname, 'fixtures', 'sbf-dispatch.so');
   const REAL_IDL = join(__dirname, 'fixtures', 'sbf-dispatch.idl.json');
@@ -326,6 +332,122 @@ describe('validation against a real compiled program', () => {
       expect(scan.found.length).toBeLessThanOrEqual(names.byName.size);
     },
   );
+});
+
+describe('recovery against a real anchor-lang program (committed image)', () => {
+  /**
+   * The second emission shape, produced by the framework rather than by a program written to
+   * resemble it.
+   *
+   * `fixtures/anchor-lang-0.30.1.so` is `~/anchor-smoke` built on this box with anchor-lang 0.30.1:
+   * six instructions behind the `#[program]` macro's dispatch over `&data[..8]`. Its IDL fixture
+   * carries the discriminator arrays anchor-lang-idl derives, checked against the bytes the
+   * framework itself prints through `<Instruction as Discriminator>::DISCRIMINATOR`.
+   *
+   * This image contains no contiguous selector and no instruction that tests the whole constant.
+   * Each arm tests data[1..8] as seven separate equality branches, and the outer switch consumed
+   * data[0] tens of instructions earlier — the shape behind the "0 of 6" measurement that retired
+   * the byte-scan assumption, and the reason `unscannable` existed.
+   */
+  const SO = join(__dirname, 'fixtures', 'anchor-lang-0.30.1.so');
+  const IDL = join(__dirname, 'fixtures', 'anchor-lang-0.30.1.idl.json');
+  const bytes = () => readFileSync(SO);
+  const parsed = () => JSON.parse(readFileSync(IDL, 'utf8'));
+  const SIX = ['initialize', 'withdraw', 'deposit', 'close_account', 'set_authority', 'collect_fees'];
+  const ABSENT = [
+    'close_position', 'liquidate', 'borrow', 'repay', 'flash_loan', 'set_owner', 'upgrade', 'mint',
+    'burn', 'approve', 'transfer', 'withdraw_fees', 'govern', 'propose', 'vote', 'claim', 'stake',
+    'unstake', 'redeem', 'deposit_with_permit', 'initialize_account', 'set_authority_v2', 'sweep_all',
+    'collect', 'fees', 'close', 'withdraw_to', 'halt', 'resume', 'migrate',
+  ];
+
+  it('is a real SBF ELF from the framework build, not a fixture shaped by hand', () => {
+    expect(existsSync(SO) && existsSync(IDL)).toBe(true);
+    const b = bytes();
+    expect([...b.subarray(0, 4)]).toEqual([0x7f, 0x45, 0x4c, 0x46]);
+    const machine = b[18]! | (b[19]! << 8);
+    expect(machine).toBe(263);
+    // anchor-lang's macro, dispatcher and error handling make this far bigger than the hand-built
+    // dispatch in sbf-dispatch.so, which is the point of keeping both.
+    expect(b.length).toBeGreaterThan(100_000);
+  });
+
+  it('recovers all six through the compare chain and none contiguously', () => {
+    const names = discriminatorsFromIdl(parsed());
+    expect(names.byName.size).toBe(6);
+    const contiguous = [...names.byName.values()].filter((h) => bytes().indexOf(Buffer.from(h, 'hex')) >= 0).length;
+    expect(contiguous).toBe(0);
+    const scan = scanDiscriminators(bytes(), names.byName);
+    expect(scan.decoded).toBe(true);
+    expect(scan.found.flatMap((f) => f.names).slice().sort()).toEqual([...SIX].sort());
+    for (const f of scan.found) expect(f.via).toEqual(['compare-chain']);
+    expect(scan.recoveredOnly.slice().sort()).toEqual([...SIX].sort());
+    expect(scan.absent).toEqual([]);
+  });
+
+  it('recovers nothing for thirty instructions this program does not implement', () => {
+    // The control the finding needs: a rule that reports six true selectors is only trustworthy
+    // if it also refuses to report near-misses. Every candidate must equal a supplied hash, and
+    // these thirty do not equal anything in the image.
+    const scan = scanDiscriminators(bytes(), discriminatorsFromIdl({ instructions: ABSENT.map((name) => ({ name })) }).byName);
+    expect(scan.searched).toBe(30);
+    expect(scan.found).toEqual([]);
+    expect(scan.absent.length).toBe(30);
+  });
+
+  it('keeps exactly the six when the field is padded with absent names', () => {
+    const names = discriminatorsFromIdl({ instructions: [...ABSENT, ...SIX].map((name) => ({ name })) });
+    expect(names.byName.size).toBe(36);
+    const scan = scanDiscriminators(bytes(), names.byName);
+    expect(scan.found.flatMap((f) => f.names).slice().sort()).toEqual([...SIX].sort());
+  });
+
+  it('takes the selector bytes from the IDL discriminator array, not from hashing', () => {
+    // The fixture declares the arrays, so a wrong hash of a name cannot be what matched. Hashing
+    // the *camelCase* spelling of the three multi-word instructions gives an IDL-shaped candidate
+    // set that finds nothing — proof the declared bytes are what was searched, and proof the
+    // recovery is not fuzzy about which bytes belong to a name.
+    const camel = (snake: string) => snake.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    const multiWord = SIX.filter((n) => n.includes('_'));
+    expect(multiWord).toEqual(['close_account', 'set_authority', 'collect_fees']);
+    const camelHashed = new Map(multiWord.map((n) => [n, anchorDiscriminator(camel(n)).toString('hex')]));
+    const declared = discriminatorsFromIdl(parsed()).byName;
+    for (const n of multiWord) expect(camelHashed.get(n)).not.toBe(declared.get(n));
+    expect(scanDiscriminators(bytes(), camelHashed).found).toEqual([]);
+    expect(scanDiscriminators(bytes(), declared).found.length).toBe(6);
+  });
+
+  it('locates a camelCase IDL name by hashing its snake_case form', () => {
+    // anchor-lang-idl convert.rs: `let name = value.name.to_snake_case(); get_disc("global", &name)`.
+    // An IDL that publishes `setAuthority` is naming the handler the bytecode dispatches on
+    // `set_authority`; hashing the published spelling verbatim was looking for bytes no image has.
+    const names = discriminatorsFromIdl({ instructions: [{ name: 'setAuthority' }, { name: 'collectFees' }] });
+    expect(names.byName.get('setAuthority')).toBe(anchorDiscriminator('set_authority').toString('hex'));
+    const scan = scanDiscriminators(bytes(), names.byName);
+    expect(scan.found.flatMap((f) => f.names).slice().sort()).toEqual(['collectFees', 'setAuthority']);
+  });
+
+  it('diffs two reads of the real image as structural, with all six persisting', () => {
+    const oldBytes = Buffer.concat([bytes(), Buffer.from([0x00])]);
+    const d = diffBytecode({ oldBytes, newBytes: bytes(), oldIdl: parsed(), newIdl: parsed() });
+    expect(d.confidence).toBe('structural');
+    expect(d.instructions?.persisting.slice().sort()).toEqual([...SIX].sort());
+    expect(d.instructions?.added).toEqual([]);
+    expect(d.instructions?.removed).toEqual([]);
+    expect(d.instructions?.idlClaimedNotFound).toEqual([]);
+  });
+
+  it('still reports an entrypoint reachable in the bytecode but dropped from the IDL', () => {
+    // The requirement that mattered most when the scan was blind: with recovery on a real program,
+    // `undeclaredEntrypoints` names the handler the published interface no longer declares.
+    const trimmed = { instructions: parsed().instructions.filter((i: { name: string }) => i.name !== 'collect_fees') };
+    const oldBytes = Buffer.concat([bytes(), Buffer.from([0x00])]);
+    const d = diffBytecode({ oldBytes, newBytes: bytes(), oldIdl: parsed(), newIdl: trimmed });
+    const undeclared = d.instructions?.undeclaredEntrypoints ?? [];
+    expect(undeclared.map((u) => u.name)).toEqual(['collect_fees']);
+    expect(undeclared[0]!.hex).toBe(anchorDiscriminator('collect_fees').toString('hex'));
+    expect(renderBytecodeDiff(d, 'anchor-lang-0.30.1')).toMatch(/undeclared entrypoints \(1\)/);
+  });
 });
 
 describe('account-requirement diff', () => {

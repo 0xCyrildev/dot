@@ -279,7 +279,7 @@ export function diffBytecode(input: {
     anchor: {
       idlAvailable,
       reason: idlAvailable
-        ? 'instruction names supplied; selectors derived as sha256("global:<name>")[0..8]'
+        ? 'instruction names supplied; selectors taken from the IDL\'s own `discriminator` array where it declares one, else derived as sha256("global:<snake_case name>")[0..8], and located by contiguous sweep plus SBF instruction-stream recovery'
         : 'no IDL supplied, so no name can be attached to any byte pattern; instruction-level diff not performed',
     },
     limits,
@@ -360,19 +360,18 @@ export function diffBytecode(input: {
       why: 'reachable selector present in the new image but absent from the new IDL — an entrypoint the published interface does not declare',
     }));
 
-  // Measured on 2026-10-22 against a real compiler-emitted SBF image (rustc 1.89.0-sbpf,
-  // platform-tools v1.54, dispatch shaped the way anchor-lang's `#[program]` macro shapes
-  // it): zero of ten `sha256("global:<name>")[0..8]` selectors appear contiguously, because
-  // LLVM materializes each 8-byte constant as a `mov32 imm32` + `hor64 imm32` pair with the
-  // instruction encoding between them. The bytes are in there — split across two immediates
-  // eight bytes apart — but a contiguous scan cannot see them.
+  // Measured on 2026-10-22 against compiler-emitted SBF (rustc 1.89.0-sbpf, platform-tools v1.54):
+  // zero of ten `sha256("global:<name>")[0..8]` selectors appear contiguously, because LLVM
+  // materializes each 8-byte constant as a `mov32 imm32` + `hor64 imm32` pair, and anchor-lang's
+  // own `match` lowers it further into a byte-wise compare tree. `scanDiscriminators` now runs the
+  // contiguous sweep *and* `sbfSelectors` recovery, which locates 10/10 and 6/6 on those images.
   //
-  // So "located none of the declared selectors" has two very different meanings, and the
-  // report must not present the second as the first: either the IDL describes instructions
-  // this image does not contain, or Dot's scanner is blind to this image's emission format.
-  // A program with three or more declared instructions that yields *nothing* is the second
-  // case far more often than the first, and the cost of guessing wrong is a reader who takes
-  // "no entrypoints added or removed" as "the interface is unchanged".
+  // "Located none of the declared selectors" therefore no longer means "the scanner cannot read
+  // compiled bytecode". It has two remaining meanings, and the report must not present either as
+  // an unchanged interface: the IDL describes handlers this image does not contain, or the image
+  // uses an emission shape the recovery has not been demonstrated on (a jump table, a binary
+  // search over `data[0]`, a compare wider than one byte). Both are Dot not seeing; only the
+  // first is evidence about the program, and Dot cannot tell them apart from inside the image.
   const declaredNames = [...(newNames?.byName.keys() ?? [])];
   const locatedDeclared = declaredNames.filter((n) => newFound.has(n)).length;
   const scanBlind = declaredNames.length >= 3 && locatedDeclared === 0;
@@ -383,7 +382,7 @@ export function diffBytecode(input: {
       name: n,
       hex: newNames?.byName.get(n) ?? '',
       why: scanBlind
-        ? `declared in the new IDL and not located — but the scan located 0 of ${declaredNames.length} declared selectors, which is the signature of a blind scan rather than an absent handler (see BYTECODE_SCAN_MISSES_SPLIT_IMMEDIATES). Treat as "not seen", not "not there"`
+        ? `declared in the new IDL and not located — but the scan located 0 of ${declaredNames.length} declared selectors, which is the signature of a blind scan rather than an absent handler (see BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES). Treat as "not seen", not "not there"`
         : 'declared in the new IDL, no matching selector located in the new image',
     }));
 
@@ -407,10 +406,15 @@ export function diffBytecode(input: {
   if (scanBlind) {
     // The honest label for "the scan saw nothing". Without this branch a blind scan and an
     // unchanged interface print the same line, and the reader concludes the attack surface
-    // did not move.
+    // did not move. It stays `unscannable` even though recovery now runs: the two passes
+    // failing together is still Dot's limitation, not the program's.
     base.confidence = 'unscannable';
     limits.push(
-      `scan located 0 of ${declaredNames.length} selectors the new IDL declares: measured against compiler-emitted SBF, discriminators are split across immediate pairs or dissolved into a byte-wise compare tree, so nothing here is located because nothing here can be — not because the entrypoints are absent`,
+      `scan located 0 of ${declaredNames.length} selectors the new IDL declares. ${
+        inNew.decoded
+          ? 'Both passes ran — the contiguous sweep and SBF recovery of `mov32`+`hor64` immediate pairs and byte-wise compare chains — so this image either lacks these handlers or lowers its dispatch into a shape Dot has not demonstrated decoding (jump table, binary search on the leading byte, a compare wider than one byte). Read this as "not seen", never as "the interface is unchanged".'
+          : 'the image did not parse as a little-endian ELF64 with a walkable .text, so only the contiguous sweep ran and recovery was impossible by construction. This says nothing about the entrypoints.'
+      }`,
     );
   } else {
     base.confidence = 'structural';

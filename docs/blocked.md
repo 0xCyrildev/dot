@@ -167,45 +167,69 @@ replay, `layoutMismatch` should stay near zero. A flat `updates` with no error i
 that matches nothing — not a quiet chain. `isReplay`, keepalive and reconnect stay
 unexercised until that run happens.
 
-## 4. Bytecode diff validated against real compiled Anchor bytecode — MEASURED, AND THE ASSUMPTION FAILED
+## 4. Bytecode diff validated against real compiled Anchor bytecode — MEASURED, THE ASSUMPTION FAILED, THE SCANNER NOW READS THE EMISSION
 
 This section used to read "blocked: no toolchain, no artifact, egress unavailable". Egress
-came back, the toolchain installed itself, and the check ran. It refuted the assumption.
+came back, the toolchain installed itself, and the check ran. It refuted the assumption, and
+then the refutation turned out to be a defect in Dot's own scan.
 
-`diffBytecode` locates instruction entrypoints by scanning an image for
-`sha256("global:<name>")[0..8]`. The derivation rule is correct — `anchor-syn` 0.30.1's
-`instruction.rs` emits `sighash(SIGHASH_GLOBAL_NAMESPACE, <snake_case method name>)` as
-`const DISCRIMINATOR: [u8; 8]` — but the *emission* is not what the scan expects:
+`diffBytecode` locates instruction entrypoints by looking for `sha256("global:<name>")[0..8]`.
+The derivation rule is correct — `anchor-syn` 0.30.1's `instruction.rs` emits
+`sighash(SIGHASH_GLOBAL_NAMESPACE, <snake_case method name>)` as `const DISCRIMINATOR: [u8; 8]`,
+and anchor-lang-idl 0.1.4's `convert.rs:377` derives an IDL discriminator the same way, from
+`value.name.to_snake_case()` — but the *emission* is not eight bytes in a row:
 
-| image | how built | contiguous 8-byte selectors found | 4-byte halves found |
+| image | how built | contiguous 8-byte selectors | recovered from `.text` |
 |---|---|---:|---:|
-| `test/fixtures/sbf-dispatch.so` (3,760 B, 10 instructions) | `cargo +1.89.0-sbpf-solana-v1.54 build --target sbpfv2-solana-solana --release`, dispatch written the way `#[program]` generates it (`pub const DISCRIMINATOR: [u8; 8]` per instruction, compared against the call data) | **0 / 10** | 10 / 10, the two halves 8 bytes apart |
-| `~/anchor-smoke/target/sbpfv2-solana-solana/release/anchor_smoke.so` (244,264 B, anchor-lang 0.30.1, 6 instructions) | same command, real framework dependency | **0 / 6** | **0 / 6** |
+| `test/fixtures/sbf-dispatch.so` (3,760 B, 10 instructions) | `cargo +1.89.0-sbpf-solana-v1.54 build --target sbpfv2-solana-solana --release`, dispatch written the way `#[program]` generates it (`pub const DISCRIMINATOR: [u8; 8]` per instruction, compared against the call data) | **0 / 10** | **10 / 10**, all as `mov32`+`hor64` immediate pairs |
+| `test/fixtures/anchor-lang-0.30.1.so` (244,264 B, anchor-lang 0.30.1, 6 instructions, committed 2026-10-22) | same command, real framework dependency | **0 / 6** | **6 / 6**, all as byte-wise compare chains |
 
-The first image's halves are visible in the disassembly as a `mov32 imm32` followed by a
-`hor64 imm32` eight bytes later — for `withdraw`, `b7 12 46 9c` then `94 6d a1 22`, i.e.
-`b712469c946da122`, the selector Dot's own fixtures use. The framework image lowers the
-`match` on eight-byte const patterns into a byte-wise compare tree, so even the halves do not
-appear. **A contiguous scan finds nothing in either, which is the case a real deployment is
-in.** Consequence, stated plainly: Dot's entrypoint-level added/removed/undeclared claims are
-demonstrated on constructed images only; against compiled bytecode they report nothing — and
-"nothing reported" is exactly what a reader mistakes for "nothing changed".
+The first image's halves are visible as a `mov32 imm32` followed by a `hor64 imm32` eight bytes
+later — for `withdraw`, `b7 12 46 9c` then `94 6d a1 22`, i.e. `b712469c946da122`. The framework
+image lowers the `match` on eight-byte const patterns into a compare tree: each arm tests
+`data[1..8]` as seven separate equality branches, and the outer `switch (data[0])` consumed the
+leading byte tens of instructions earlier (measured: 87 for `initialize`).
 
-What changed in the code as a result (not a fix to the scanner — a fix to the claim):
+`src/state/sbfSelectors.ts` reads the ELF64 section table and walks `.text` as eBPF, recovering
+both shapes plus the contiguous case. Nothing is reported that is not a hash the IDL supplied, so
+a misdecode loses a selector and cannot invent one; the two negative controls that hold that
+statement are in the suite and in the probe:
 
-- `confidence: "unscannable"` when the scan locates none of three or more declared selectors,
-  with the reason in the limits list, instead of `"structural"` over a silent scan.
-- `idlClaimedNotFound[].why` says "not seen, scan may be blind" rather than implying absence.
-- The re-test of a carried hypothesis treats an unscannable diff as *no entrypoint view*, so a
-  routine-upgrade claim cannot be "confirmed" by the scan finding nothing (see
-  `test/hypothesis.test.ts > derives entrypointSurface from the diff being scannable, not
-  merely present`).
+- 30 instruction names neither program implements: **0 recovered** on both images.
+- the six real names mixed into that 30-name field: **exactly 6 recovered**, no more.
+
+Three decoder bugs, each of which first presented as evidence about the bytecode rather than
+about Dot, are recorded in that file's comments because they are the failure mode this module
+exists to prevent: `BPF_EXIT` defined as `0x10 >> 3` (real value `0x90`) aliased `BPF_JEQ` and a
+blacklist guard then silently dropped **every `jeq`** from the compare stream, which cost two of
+six selectors; the reconstructed immediate pair was compared as a numeric hex string instead of
+eight little-endian bytes, which found 0 of 10 pairs that were plainly there; and the `lddw`
+widening test `(op & 0xe0) === 0x18` never fired, because `0x18` is the size field and `0xe0` the
+mode field.
+
+What the code does now:
+
+- `scanDiscriminators` runs the contiguous sweep **and** the recovery, and reports `via` per
+  selector plus `decoded` (did the image parse at all) and `recoveredOnly` (what the old sweep
+  would have called absent).
+- `confidence: "structural"` on both real images, with the entrypoint set filled in.
+- `confidence: "unscannable"` is retained for the case it means: three or more declared selectors
+  and nothing located. Its limits text now distinguishes "the image did not parse as a
+  little-endian ELF64 with a walkable `.text`, so recovery could not run" from "both passes ran
+  and found nothing", and `idlClaimedNotFound[].why` still says *not seen*, never *absent*.
+- `test/bytecode.test.ts` pins all of it against the two committed images, including a
+  `undeclaredEntrypoints` case on the real anchor-lang program: same bytes both sides, new IDL
+  omitting `collect_fees`, the report naming it.
 
 Reproduce the measurement:
 
 ```bash
-# the committed image, always run in the suite
+# both committed images, always run in the suite
 npx vitest run test/bytecode.test.ts
+
+# the per-shape census (recovered / via / missed) and the two negative controls
+npx tsx scripts/probe-sbf.ts
+npx tsx scripts/probe-negative.ts
 
 # any other program
 DOT_TEST_SO=/path/program.so DOT_TEST_IDL=/path/idl.json npx vitest run test/bytecode.test.ts
@@ -222,8 +246,10 @@ Note on the wrapper: `cargo build-sbf` itself fails on this box with
 `rustup toolchain list -v` output including the tab-separated path. Invoking the registered
 toolchain directly (as above) works and is what produced both images.
 
-**What would close this for real:** either match what the compiler emits — the immediates pair
-and the compare tree — or stop scanning bytecode for entrypoints and read a published IDL,
-accepting that most programs publish none. Until then `BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES`
-is a named defect, not a caveat, and the bytecode-diff section of any report on a real program
-should be read as Dot not seeing.
+**What would close the rest:** two images is not a corpus. The recovery is demonstrated on the two
+shapes the Solana toolchain emitted here; a dispatch lowered into a jump table, a binary search on
+the leading byte, or a compare wider than one byte produces no consecutive run and is then
+reported as *not located*, capped by `unscannable` — which is the honest answer, not the fixed one.
+The job that prices that residual is sampling: run the gated check against published mainnet
+programs and report the fraction located. `BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES` stays NARROWED
+for that reason, not because the scan is still blind.

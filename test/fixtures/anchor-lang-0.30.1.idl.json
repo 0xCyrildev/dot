@@ -1,0 +1,100 @@
+{
+  "address": "Anch1111111111111111111111111111111111111",
+  "metadata": {
+    "name": "anchor_smoke",
+    "version": "0.1.0"
+  },
+  "note": "Built locally with anchor-lang 0.30.1 (src/lib.rs #[program], six instructions, dispatch over &data[..8]). Instruction names are the Rust method names; the discriminator arrays are the bytes anchor-lang-idl 0.1.4 convert.rs derives from them: sha256(\"global:\" + name.to_snake_case())[0..8]. The same six values were printed by the framework itself through <crate::instruction::X as Discriminator>::DISCRIMINATOR under cargo test --lib, and they match.",
+  "instructions": [
+    {
+      "name": "initialize",
+      "accounts": [],
+      "args": [],
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ]
+    },
+    {
+      "name": "withdraw",
+      "accounts": [],
+      "args": [],
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ]
+    },
+    {
+      "name": "deposit",
+      "accounts": [],
+      "args": [],
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ]
+    },
+    {
+      "name": "close_account",
+      "accounts": [],
+      "args": [],
+      "discriminator": [
+        125,
+        255,
+        149,
+        14,
+        110,
+        34,
+        72,
+        24
+      ]
+    },
+    {
+      "name": "set_authority",
+      "accounts": [],
+      "args": [],
+      "discriminator": [
+        133,
+        250,
+        37,
+        21,
+        110,
+        163,
+        26,
+        121
+      ]
+    },
+    {
+      "name": "collect_fees",
+      "accounts": [],
+      "args": [],
+      "discriminator": [
+        164,
+        152,
+        207,
+        99,
+        30,
+        186,
+        19,
+        182
+      ]
+    }
+  ]
+}
