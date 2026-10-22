@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown, type DotReport } from '../src/report.js';
+import { renderMarkdown, maliceAlarm, type DotReport } from '../src/report.js';
 import { renderDanger, scoreDanger, type DangerInputs } from '../src/score/danger.js';
 
 /**
@@ -296,5 +296,43 @@ describe('malice in the report', () => {
     const md = renderMarkdown(minimal({ danger: scoreDanger(base()) }));
     expect(md).not.toMatch(/SUSPECTED_MALICIOUS/);
     expect(md).toMatch(/MALICE HEURISTIC: not flagged/);
+  });
+});
+
+describe('the dot watch summary line', () => {
+  // Both watch paths (poll and yellowstone) print one line per event, and that line is the only thing an
+  // operator reads while a stream is running. Two separate call sites in a 1000-line CLI action is
+  // exactly where a ranking went missing before by patching one string and not the other, so the
+  // derivation is pinned here rather than trusted from a grep.
+  const flagged = scoreDanger(base({
+    delta: { confidence: 'structural', addedEntrypoints: ['drain'], undeclaredEntrypoints: ['drain'], accountChanges: [] },
+    integrity: { funding: { state: 'flagged_source', fromAddress: 'declared-suspect', detail: 'received SOL from an address the operator named' }, declaredThreshold: null, timelockDeclared: false, fundingProbe: { callsSpent: 2, signaturesSeen: 1 } },
+    timing: null,
+  }));
+
+  it('carries the scream and the alarm sentence when the gate fired', () => {
+    expect(flagged.malice.flagged).toBe(true);
+    const alarm = maliceAlarm({ danger: flagged });
+    expect(alarm.suffix).toBe(' SUSPECTED_MALICIOUS');
+    expect(alarm.line).toBe(
+      'VERDICT: SUSPECTED_MALICIOUS — This upgrade has the structural signature of an attack. Immediate human review required. Do not trust the new bytecode.',
+    );
+  });
+
+  it('borrows nothing for a CRITICAL that was not flagged, which is the common case', () => {
+    // The same program, the same 100/100 queue position, with the funding evidence replaced by an
+    // established history: high score, no positive evidence, no alarm. A suffix keyed off the category
+    // would scream on roughly every single-key upgrade there is.
+    const loudButUnflagged = scoreDanger(base({
+      integrity: { funding: { state: 'established', detail: 'years of signatures' }, declaredThreshold: null, timelockDeclared: false, fundingProbe: { callsSpent: 3, signaturesSeen: 10 } },
+      timing: null,
+    }));
+    expect(loudButUnflagged.category).toBe('CRITICAL');
+    expect(loudButUnflagged.malice.flagged).toBe(false);
+    expect(maliceAlarm({ danger: loudButUnflagged })).toEqual({ suffix: '', line: null });
+  });
+
+  it('says nothing when there is no ranking at all, rather than throwing on a watch tick that never scored', () => {
+    expect(maliceAlarm({ danger: undefined })).toEqual({ suffix: '', line: null });
   });
 });

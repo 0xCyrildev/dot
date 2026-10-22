@@ -133,6 +133,19 @@ export function formatEscalation(r: DotReport): string | null {
   ].join('\n');
 }
 
+/**
+ * The `dot watch` one-liner's malice suffix. Sits next to `formatEscalation()` because it is the other
+ * thing a streaming operator reads without opening the report — the scream belongs in that line, and not
+ * only in the markdown `emit` writes underneath. Both parts print nothing unless the gate fired: a
+ * CRITICAL that was *not* flagged must not borrow the alarm, and `danger=` already carries the queue
+ * position. `line` is the brief's verdict sentence, taken from the gate rather than retyped, so no
+ * rendering site can invent a fourth variant of the alarm.
+ */
+export function maliceAlarm(rep: Pick<DotReport, 'danger'>): { suffix: string; line: string | null } {
+  const m = rep.danger?.malice;
+  return m?.flagged ? { suffix: ' SUSPECTED_MALICIOUS', line: m.verdictLine } : { suffix: '', line: null };
+}
+
 function renderHypothesisBlock(h: NonNullable<DotReport['hypothesis']>): string {
   const L: string[] = [];
   L.push(`## Hypothesis — \`${h.claimKind}\``);

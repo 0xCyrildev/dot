@@ -19,6 +19,7 @@ import type { AccountUpdate } from '../rpc/yellowstone.js';
 import type { ObservedState as ObservedStateLike } from '../watcher/watcher.js';
 import { YellowstoneUpgradeFeed } from '../rpc/yellowstone.js';
 import { StagedUpgradeDetector } from '../state/preDeploy.js';
+import { parseIncidentAt, parseThreshold } from './args.js';
 import { ResilientClient } from '../rpc/resilient.js';
 import { ChainVerifier } from '../rpc/verifier.js';
 import { BlockBatcher, loadCostModel, resolveCostModelPath, UNVERIFIED_DEFAULTS, type CostModel } from '../graph/batcher.js';
@@ -27,7 +28,7 @@ import { diffBytecode, renderBytecodeDiff, discriminatorsFromIdl } from '../stat
 import { renderReplay, replayTransaction } from '../commands/replay.js';
 import { resolveIdl } from '../idl.js';
 import { loadSeedFile, renderHoldings, sumHoldings } from '../state/seeds.js';
-import { formatEscalation, renderMarkdown, type DotReport } from '../report.js';
+import { formatEscalation, maliceAlarm, renderMarkdown, type DotReport } from '../report.js';
 import { loadHypothesisFile, renderHypothesis } from '../agent/hypothesis.js';
 import type { Hypothesis } from '../agent/hypothesis.js';
 import { BlastRadiusScanner, renderBlastRadius, loadProgramList, loadAuthorityMap } from '../commands/blastRadius.js';
@@ -124,33 +125,6 @@ async function readIdlPair(now?: string, prior?: string): Promise<{ now: unknown
 }
 
 /**
- * `--threshold 2-of-3`. A multisig's quorum lives inside the multisig account, which Dot does not
- * decode, so the only way this number reaches a report is an operator declaring it. Anything that
- * does not parse is refused loudly rather than defaulted: a guessed threshold is a guessed accusation.
- */
-export function parseThreshold(value: string): { m: number; n: number } {
-  const hit = /^(\d+)\s*(?:-?of|-)\s*(\d+)$/i.exec(value.trim());
-  if (!hit) throw new Error(`--threshold wants "m-of-n" (e.g. 2-of-3), got "${value}"`);
-  const m = Number(hit[1]);
-  const n = Number(hit[2]);
-  if (!(m >= 1 && n >= m && n <= 11)) throw new Error(`--threshold "${value}" is not a valid Ed25519 multisig (need 1 <= m <= n <= 11)`);
-  return { m, n };
-}
-
-/** `--incident-at 2026-10-22T09:00Z`, or a unix time. Operator-declared: Dot fetches no incident feed,
- *  so an upgrade is never "near an incident" unless somebody says when one happened. */
-export function parseIncidentAt(value: string): number {
-  const v = value.trim();
-  if (/^\d{9,13}$/.test(v)) {
-    const n = Number(v);
-    return n < 1e11 ? n * 1000 : n;
-  }
-  const t = Date.parse(v);
-  if (Number.isNaN(t)) throw new Error(`--incident-at wants an ISO timestamp or a unix time, got "${v}"`);
-  return t;
-}
-
-/**
  * Record what a watch tick learned about one program. `upgradesAt` grows only when the event said the
  * **bytecode** changed: Dot's own observation times are the cadence basis for the danger ranking's
  * timing axis, so filling it with authority changes or baseline sightings would teach the axis a
@@ -173,17 +147,6 @@ function recordDigest(
     tier: rep.tier,
     upgradesAt: bytecodeChanged ? [...earlier, now].slice(-32) : earlier,
   });
-}
-
-/**
- * The watch summary line is the only thing an operator reads while a stream runs, so the scream belongs
- * in it and not only in the markdown `emit` writes underneath. Both parts print nothing unless the gate
- * fired: a CRITICAL that was *not* flagged must not borrow the alarm, and `danger=` already carries the
- * queue position.
- */
-export function maliceAlarm(rep: DotReport): { suffix: string; line: string | null } {
-  const m = rep.danger?.malice;
-  return m?.flagged ? { suffix: ' SUSPECTED_MALICIOUS', line: m.verdictLine } : { suffix: '', line: null };
 }
 
 async function build(o: GlobalOpts & BuildExtras) {

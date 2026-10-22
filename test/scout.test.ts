@@ -360,8 +360,9 @@ describe('escalation is phrased as an ask, not a finding', () => {
   });
 });
 
+const axisOf = (d: NonNullable<Awaited<ReturnType<Scout['run']>>['danger']>, id: string) => d.axes.find((a) => a.id === id)!;
+
 describe('Scout: the Upgrade Danger Ranking rides the same report', () => {
-  const axisOf = (d: NonNullable<Awaited<ReturnType<Scout['run']>>['danger']>, id: string) => d.axes.find((a) => a.id === id)!;
 
   it('scores the authority it read from ProgramData and refuses to guess the rest', async () => {
     // No --state, no --multisig: the authority is a plain key, so posture is the full 40 — and
@@ -477,5 +478,42 @@ describe('Scout: the Upgrade Danger Ranking rides the same report', () => {
       txRoute(txFixture('tx-depth3')),
     ]), new Budget({ maxRpcCalls: 500, maxSignatures: 500 })).run({ program: TARGET });
     expect(axisOf(untouched.danger!, 'authorityIntegrity').notAssessed.join(' ')).toMatch(/funding was not probed/);
+  });
+});
+
+describe('Scout: the funding probe spends only what an axis can score', () => {
+  const sigCallsFor = (t: FakeTransport, addr: string) =>
+    t.calls.filter((c) => c.method === 'getSignaturesForAddress' && (c.params as unknown[])[0] === addr).length;
+
+  it('does not walk a multisig authority that no band can score', async () => {
+    // The brief's +30 is "a single EOA funded from a suspect source". A multisig has no funding band at
+    // all without a declared threshold, so walking its authority history spends up to four paid calls
+    // on evidence the ranking cannot use. The skip has to be *said*, or the silence reads as probed-clean.
+    const { transport, budget } = stack([accountRoute(AUTH), sigsRoute(2), txRoute(txFixture('tx-depth3'))]);
+    const report = await makeScout(transport, budget, { multisigs: [AUTH], checkFunding: true }).run({ program: TARGET });
+    expect(sigCallsFor(transport, AUTH)).toBe(0);
+    expect(axisOf(report.danger!, 'authorityIntegrity').points).toBeNull();
+    expect(report.stages.map((s) => s.note).join(' ')).toMatch(/funding probe skipped for a multisig/);
+    expect(report.evidence.map((e) => e.summary).join(' ')).toMatch(/authority funding not probed/);
+  });
+
+  it('does walk it when the operator named suspect counterparties, because that is a standing request', async () => {
+    const { transport, budget } = stack([accountRoute(AUTH), sigsRoute(2), txRoute(txFixture('tx-depth3'))]);
+    const report = await makeScout(transport, budget, {
+      multisigs: [AUTH],
+      checkFunding: true,
+      suspectAddresses: ['Tornadocash-declared-by-operator1111111111111111111'],
+    }).run({ program: TARGET });
+    expect(sigCallsFor(transport, AUTH)).toBe(1);
+    expect(report.stages.map((s) => s.note).join(' ')).toMatch(/authority funding probe: /);
+    // And it is still not scored: the read is evidence for the human, not points for the axis.
+    expect(axisOf(report.danger!, 'authorityIntegrity').points).toBeNull();
+    expect(axisOf(report.danger!, 'authorityIntegrity').notAssessed.join(' ')).toMatch(/deliberately not scored/);
+  });
+
+  it('still walks a single key every time, which is the case the band exists for', async () => {
+    const { transport, budget } = stack([accountRoute(AUTH), sigsRoute(2), txRoute(txFixture('tx-depth3'))]);
+    await makeScout(transport, budget, { checkFunding: true }).run({ program: TARGET });
+    expect(sigCallsFor(transport, AUTH)).toBe(1);
   });
 });

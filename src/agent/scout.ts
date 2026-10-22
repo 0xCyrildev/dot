@@ -387,15 +387,34 @@ export class Scout {
     // Malice-signature evidence, opt-in because each piece buys calls the analysis did not need.
     // Refused or empty reads become `unverified`, never a clean score — see src/agent/funding.ts.
     let funding: FundingProbeResult | null = null;
-    if (this.o.checkFunding && ctx.authority.after && (ctx.authority.posture === 'eoa' || ctx.authority.posture === 'multisig')) {
+    const suspectList = this.o.suspectAddresses ?? [];
+    // A single key can be scored from a funding read. A multisig cannot: the brief's top band is a
+    // *single EOA* funded from a suspect source, and its low-threshold band needs a declared m-of-n that
+    // Dot does not read. So a multisig is probed only when the operator named counterparty addresses —
+    // that list is a standing request to check them whoever signs. Otherwise the walk buys up to four
+    // calls whose result no axis can use, and the skip is recorded in the trace so a multisig that was
+    // never probed cannot read as a multisig that was probed and found clean.
+    const willProbe = Boolean(
+      this.o.checkFunding
+        && ctx.authority.after
+        && (ctx.authority.posture === 'eoa' || (ctx.authority.posture === 'multisig' && suspectList.length > 0)),
+    );
+    if (willProbe && ctx.authority.after) {
       funding = await probeAuthorityFunding(this.o.client, {
         authority: ctx.authority.after,
-        suspectAddresses: new Set(this.o.suspectAddresses ?? []),
+        suspectAddresses: new Set(suspectList),
       });
       this.mark('evaluate', `authority funding probe: ${funding.evidence.state} (${funding.callsSpent} call(s), ${funding.signaturesSeen} signature(s) listed)`);
       this.ledger.add({
         kind: funding.evidence.state === 'unverified' || funding.evidence.state === 'established' ? 'limit' : 'edge',
         summary: `authority funding ${funding.evidence.state}: ${funding.evidence.detail}`,
+        ref: { program: ctx.program, from: ctx.authority.after ?? undefined },
+      });
+    } else if (this.o.checkFunding && ctx.authority.posture === 'multisig') {
+      this.mark('evaluate', 'authority funding probe skipped for a multisig with no --suspect addresses: no axis can score it, so the calls were not spent');
+      this.ledger.add({
+        kind: 'limit',
+        summary: 'authority funding not probed: the integrity axis bands a multisig on its declared threshold alone, and Dot ships no suspect-source list, so a funding walk on this authority would have bought evidence nothing scores',
         ref: { program: ctx.program, from: ctx.authority.after ?? undefined },
       });
     }
