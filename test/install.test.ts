@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -88,6 +88,18 @@ describe('packaged install', () => {
     expect(existsSync(installed), `installed entry missing at ${installed} — the install layout changed and this test stopped measuring it`).toBe(true);
     const mode = execFileSync('stat', ['-c', '%a', installed], { encoding: 'utf8' }).trim();
     expect(['755', '775', '750', '770']).toContain(mode.slice(-3));
+  });
+
+  it('reports one version everywhere a version is reported', () => {
+    // The manifest, `dot --version`, and the MCP initialize handshake are three separate
+    // literals in three files. Nothing stops them drifting except this assertion, and a tool
+    // whose install says 1.0.0 while its `--version` says 0.1.0 makes a release note wrong.
+    const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version: string };
+    expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/);
+    for (const b of ['dot', 'dot-limits']) {
+      const out = execFileSync(join(prefix, 'bin', b), ['--version'], { encoding: 'utf8', timeout: 30_000 });
+      expect(out.trim(), `${b} --version`).toBe(manifest.version);
+    }
   });
 
   it('dispatches an alias to its own subcommand instead of the root help', () => {

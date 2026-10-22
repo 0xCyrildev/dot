@@ -133,7 +133,7 @@ function errorResult(message: string, extra: Record<string, unknown> = {}) {
  */
 export function buildServer(opts: McpOptions): McpServer {
   const mode: 'rules' | 'real' = opts.mode === 'real' ? 'real' : 'rules';
-  const server = new McpServer({ name: 'dot', version: '0.1.0' }, { capabilities: { tools: {} } });
+  const server = new McpServer({ name: 'dot', version: '1.0.0' }, { capabilities: { tools: {} } });
 
   server.registerTool(
     'dot_blast_radius',

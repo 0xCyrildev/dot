@@ -179,7 +179,7 @@ async function build(o: GlobalOpts & BuildExtras) {
 program
   .name('dot')
   .description('Agentic Solana blast-radius analyzer for BPFLoaderUpgradeable upgrades.')
-  .version('0.1.0');
+  .version('1.0.0');
 
 program
   .command('analyze')

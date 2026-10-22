@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 /**
@@ -90,6 +91,10 @@ describe('dot mcp over stdio', () => {
       clientInfo: { name: 'second', version: '0.0.0' },
     });
     expect(init.result.serverInfo.name).toBe('dot');
+    // Same version as the manifest: the MCP handshake is a third place a version literal lives,
+    // and a host reads it as the identity of the server it is talking to.
+    const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    expect(init.result.serverInfo.version).toBe(manifest.version);
     expect(init.result.capabilities.tools).toBeDefined();
   });
 

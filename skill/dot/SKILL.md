@@ -27,7 +27,7 @@ node dist/cli/index.js analyze <PROGRAM_ID>
 
 or `npm link` with a prefix you own (`npm config set prefix ~/.npm-global`; on the build box the
 default prefix resolves to a `/usr/local/lib/node_modules` that does not exist), or `npm pack` and
-`npm install -g --prefix /tmp/<dir> ./zeroxcyril-dot-0.1.0.tgz` — the last is the form
+`npm install -g --prefix /tmp/<dir> ./zeroxcyril-dot-1.0.0.tgz` — the last is the form
 `test/install.test.ts` verifies, and every one of the six bins was executed from that install, not
 listed. The bare bin is `dot`, which collides with graphviz; `dot-analyze`, `dot-watch`, `dot-mcp`,
 `dot-limits`, `dot-calibrate` do not. One alias quirk to know before scripting around it: an alias

@@ -12,7 +12,7 @@
 ```bash
 git clone <repo> && cd dot
 npm ci && npm run build
-npm test                                   # 193 passed, 1 skipped (a gated live-endpoint test)
+npm test                                   # offline suite; count recorded in RELEASE-v1.0.0.md
 
 # The real parser, run over a real mainnet transaction that ships in the repo:
 node dist/cli/index.js replay \

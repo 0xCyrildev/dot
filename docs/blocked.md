@@ -9,10 +9,15 @@ Re-run 2026-10-22, with the exact answers rather than a summary:
 
 | command | result |
 |---|---|
-| `npm publish --dry-run` | succeeds — 122 files packed, `+ @zeroxcyril/dot@0.1.0` |
+| `npm publish --dry-run` | succeeds — 122 files packed, `+ @zeroxcyril/dot@0.1.0` (the version recorded at the time of the probe; released as 1.0.0) |
 | `npm whoami` | `npm error code E401 Unauthorized - GET https://registry.npmjs.org/-/whoami` |
 | `npm publish --access public` | `npm error code E404 Not Found - PUT https://registry.npmjs.org/@zeroxcyril%2fdot` — "could not be found or you do not have permission to access it" |
 | `npm pack` + `npm install -g --prefix /tmp/dot-prefix2 ./zeroxcyril-dot-0.1.0.tgz` | installs clean; all six bins present and executing |
+
+The 1.0.0 release was verified the same way afterwards, by the suite rather than by hand:
+`test/install.test.ts` packs the tarball, installs it into a throwaway prefix, executes all six
+bins, checks the installed file mode, and asserts that the manifest, `dot --version` and the MCP
+`serverInfo` all report the one version.
 
 So the registry is **reachable** — it answered the PUT with a 404, which is what npm returns for
 an unauthenticated write to a package that does not exist yet. The blocker is credentials, not

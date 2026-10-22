@@ -9,7 +9,10 @@ about A and C: who calls the program that just changed, how often, and how much 
 them.
 
 ![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-199 tests, no network (1 skipped: a gated live-Geyser test). `tsc --noEmit` and `npm run build` clean.
+the suite runs with no network and no API key (the only skips are gated live-endpoint tests),
+and `tsc --noEmit` / `npm run build` are clean. The count at each release is recorded in
+[`docs/RELEASE-v1.0.0.md`](docs/RELEASE-v1.0.0.md) rather than repeated here, because a number copied
+into two documents is a number that goes stale in two places.
 
 You give it a program id, or a list of them, or nothing at all in chain-wide mode, and it watches
 `BPFLoaderUpgradeable` for bytecode changes; when one lands it reconstructs the CPI dependency graph
@@ -69,8 +72,8 @@ As a global install from the built tarball — verified end to end by
 prefix, and executes all six bins:
 
 ```bash
-npm pack                                                    # -> zeroxcyril-dot-0.1.0.tgz
-npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-0.1.0.tgz
+npm pack                                                    # -> zeroxcyril-dot-1.0.0.tgz
+npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-1.0.0.tgz
 /tmp/dot-prefix/bin/dot-limits
 ```
 
@@ -414,7 +417,7 @@ ecosystem's supply chain in exactly the way this project exists to fix.
 ## Testing
 
 ```bash
-npm test           # 199 tests, no network, no API key
+npm test           # the whole suite, offline; see docs/RELEASE-v1.0.0.md for the count at release
 npm run typecheck
 ```
 
