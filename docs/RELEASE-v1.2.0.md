@@ -4,7 +4,7 @@ Released 2026-10-22 to npm as `@zeroxcyril/dot@1.2.0`. Supersedes [v1.0.0](./REL
 
 Suite at this tree: **425 passed / 3 skipped, 32 files**, `npx vitest run`, rc 0;
 `npx tsc -p tsconfig.json --noEmit` rc 0 (never piped — a pipe reports the pipe's status).
-`bash scripts/verify-install.sh --from registry` after the publish: 6/6 bins execute and report `1.2.0`.
+`npm run prepublishOnly` (= `scripts/verify-install.sh`, from the packed tarball) before it: 6/6 bins execute and report `1.2.0`, 140 files, 1.2 MB unpacked. The `--from registry` form is the check to run *after* the upload lands, and is not what that sentence describes — this release note was written before the publish existed.
 
 ## What is in it
 
