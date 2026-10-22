@@ -14,6 +14,7 @@ import { join } from 'node:path';
  */
 
 const SKILL_DIR = join(__dirname, '..', 'skill', 'dot');
+const ROOT = join(__dirname, '..');
 const SKILL = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
 
 function frontmatter(text: string): Record<string, string> {
@@ -127,15 +128,32 @@ describe('references are real artifacts', () => {
 });
 
 describe('no unverified claims', () => {
-  it('does not print an npm install line this build cannot honour', () => {
+  it('prints an npm install line only because the package is published, and pins its version', () => {
+    // This test used to assert the opposite: it forbade `npm install -g @zeroxcyril/dot` and
+    // required the docs to say "not published", because the registry had never accepted a publish.
+    // @zeroxcyril/dot@1.0.0 went out on 2026-10-22 and the install + npx forms were both executed
+    // against the registry, so the guard flips to the thing that can still rot: a document that
+    // quotes a version the package no longer has. The registry itself is not queried here — the
+    // suite is offline by design — so this checks doc/manifest agreement, and docs/blocked.md §1
+    // records the command that proves the published state (npm view @zeroxcyril/dot version).
+    const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version: string };
     for (const f of ['SKILL.md', 'README.md']) {
       const text = readFileSync(join(SKILL_DIR, f), 'utf8');
-      expect(text).not.toMatch(/npm install -g @zeroxcyril\/dot/);
-      expect(text).toMatch(/not published|npm whoami|E401|blocked/i);
+      expect(text).toMatch(/npm install -g @zeroxcyril\/dot/);
+      expect(text).not.toMatch(/not published to npm|no credentials, so no line here claims/);
+      for (const quoted of text.match(/@zeroxcyril\/dot@(\d+\.\d+\.\d+)/g) ?? []) {
+        expect(quoted, `${f} quotes a version that is not the manifest's`).toBe(`@zeroxcyril/dot@${manifest.version}`);
+      }
+      for (const tgz of text.match(/zeroxcyril-dot-(\d+\.\d+\.\d+)\.tgz/g) ?? []) {
+        expect(tgz).toBe(`zeroxcyril-dot-${manifest.version}.tgz`);
+      }
     }
+    // And the publish claim in the root README matches the same version.
+    const rootReadme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+    expect(rootReadme).toContain('Published as `@zeroxcyril/dot@1.0.0`');
   });
 
-  it('states plainly that the geyser path and calibration were never run live', () => {
+  it('states plainly that the geyser path was never run live', () => {
     const combined = readFileSync(join(SKILL_DIR, 'README.md'), 'utf8');
     expect(combined).toMatch(/no\s+Yellowstone endpoint has been reached live/i);
   });

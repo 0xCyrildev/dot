@@ -32,6 +32,10 @@ function npm(args: string[], env: Record<string, string> = {}): string {
   });
 }
 
+// Install once, in the setup, and let every test only execute the result.
+// This file used to run `npm install -g` inside two separate tests into the same prefix.
+// Each takes ~17s alone; under parallel suite load the second one blew a 240s test timeout,
+// which is a flake that reports a false failure against an installer that worked.
 beforeAll(() => {
   // Build first: the tarball packs dist/, so a stale dist would test stale bytes.
   npm(['run', 'build']);
@@ -40,7 +44,8 @@ beforeAll(() => {
   tarball = join(ROOT, made[made.length - 1]!.trim());
   if (!existsSync(tarball)) throw new Error(`npm pack produced no tarball (got: ${out.slice(0, 200)})`);
   prefix = mkdtempSync(join(tmpdir(), 'dot-install-'));
-}, 240_000);
+  npm(['install', '-g', '--no-audit', '--no-fund', tarball], { npm_config_prefix: prefix });
+}, 600_000);
 
 afterAll(() => {
   if (prefix) rmSync(prefix, { recursive: true, force: true });
@@ -66,7 +71,6 @@ describe('packaged install', () => {
   });
 
   it('installs globally into a clean prefix and every bin executes', () => {
-    npm(['install', '-g', '--no-audit', '--no-fund', tarball], { npm_config_prefix: prefix });
     const binDir = join(prefix, 'bin');
     expect(existsSync(binDir)).toBe(true);
     for (const b of BINS) {
@@ -75,7 +79,7 @@ describe('packaged install', () => {
       const out = execFileSync(target, ['--help'], { encoding: 'utf8', timeout: 60_000 });
       expect(out).toMatch(/Usage:/);
     }
-  }, 240_000);
+  }, 300_000);
 
   it('ships the bins executable, not at tsc default mode', () => {
     // Resolved through npm rather than assumed. The path used to be
@@ -103,7 +107,6 @@ describe('packaged install', () => {
   });
 
   it('dispatches an alias to its own subcommand instead of the root help', () => {
-    npm(['install', '-g', '--no-audit', '--no-fund', tarball], { npm_config_prefix: prefix });
     // `--help`, not bare: commander exits nonzero when a required option is absent,
     // which is the *correct* behaviour and would fail this test as an exception.
     const watch = execFileSync(join(prefix, 'bin', 'dot-watch'), ['--help'], { encoding: 'utf8', timeout: 30_000 });

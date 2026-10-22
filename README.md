@@ -51,14 +51,20 @@ about the evidence Dot was allowed to gather, not an all-clear.
 
 ## Install and first run
 
-Not published to npm yet. Re-measured 2026-10-22: `npm publish --dry-run` succeeds (122 files),
-`npm whoami` returns E401 and `npm publish --access public` returns `E404 … PUT
-https://registry.npmjs.org/@zeroxcyril%2fdot` — the registry is reachable, the credentials are not,
-so `npm install -g @zeroxcyril/dot` would be an unverified line and is therefore not printed
-anywhere in this file. See `docs/blocked.md` §1. Every command below is one that was actually run,
-which is the same rule Chase's README states out loud.
+Published as `@zeroxcyril/dot@1.0.0` on 2026-10-22. Both lines below were run against the registry
+before they were written here — a global install into a throwaway prefix reported `1.0.0` from all six
+bins, and `npx` printed the limit catalogue:
 
-From a clone:
+```bash
+npm install -g @zeroxcyril/dot
+dot analyze <PROGRAM_ID> --secondary-rpc <url>     # dot itself is fine; /usr/bin/dot is graphviz
+npx -y -p @zeroxcyril/dot dot-limits --status      # no install at all; prints the limit catalogue
+```
+
+The package declares a `files` allowlist, so the published tarball carries `dist/`, the skill, the
+README, the LICENSE and `targets.example.json` — 122 files, no development notes.
+
+From a clone, which is what you want if you intend to change it:
 
 ```bash
 npm ci
@@ -67,9 +73,8 @@ node dist/cli/index.js analyze <PROGRAM_ID>
 node dist/cli/index.js limits                  # what Dot cannot see, as data
 ```
 
-As a global install from the built tarball — verified end to end by
-`test/install.test.ts`, which packs, installs with `npm install -g` into a throwaway
-prefix, and executes all six bins:
+Or from a local build of this checkout, which is the path `test/install.test.ts` verifies (packs,
+installs into a throwaway prefix, executes all six bins):
 
 ```bash
 npm pack                                                    # -> zeroxcyril-dot-1.0.0.tgz
@@ -77,17 +82,9 @@ npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-1.0.0.tgz
 /tmp/dot-prefix/bin/dot-limits
 ```
 
-Or with a prefix you control on PATH:
-
-```bash
-npm config set prefix ~/.npm-global
-export PATH=~/.npm-global/bin:$PATH
-npm link && dot analyze <PROGRAM_ID>
-```
-
-`npm link` needs a writable global prefix. On the build box it is not: the prefix
-resolves to a `/usr/local/lib/node_modules` that does not exist, so `npm link` fails
-with EACCES rather than half-installing.
+On a box where the global prefix is not writable, `npm config set prefix ~/.npm-global` plus
+`export PATH=~/.npm-global/bin:$PATH` then works with `npm link` or either install above; the default
+prefix on the build box resolves to a `/usr/local/lib/node_modules` that does not exist.
 
 **The `dot` bin name collides with graphviz, and this is not hypothetical.** `/usr/bin/dot` was present
 here, shadowed the linked binary, and `dot limits` printed graphviz's `can't open limits`. The package
@@ -99,9 +96,10 @@ dot-analyze <program>   dot-watch --targets targets.json   dot-mcp
 dot-limits                  dot-calibrate --rpc <url>
 ```
 
-Verified by symlinking both names and running them: `dot-limits` prints the limit catalogue and
-`dot-watch` complains about its own missing `--targets`. After a publish this becomes
-`npm install -g @zeroxcyril/dot`; the clone form above is what actually ran.
+Verified from the published package on 2026-10-22: all six names above were executed out of a
+registry install into a throwaway prefix, each reporting `1.0.0` — `dot-limits` printed the limit
+catalogue and `dot-watch` complained about its own missing `--targets`. `dot` alone still hits
+graphviz first if `/usr/bin/dot` precedes your npm bin directory on PATH.
 
 Nothing in a `.env` is required. No API key is read unless you ask for model reasoning.
 

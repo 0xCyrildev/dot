@@ -15,5 +15,8 @@ read what comes back.
   tier, and an answer citing evidence that was never issued is discarded whole.
 - **References.** [`references/live-run-2026-10-21.json`](./references/live-run-2026-10-21.json) is the
   genuine artifact, including the `-32015` history refusal. It is a failure example on purpose.
-- **Not verified, and said so in the skill.** `@zeroxcyril/dot` is not published (`docs/blocked.md`), no
-  Yellowstone endpoint has been reached live, and no mainnet block has been calibrated in this build.
+- **What is verified, and what is not.** The package is published and installable
+  (`npm install -g @zeroxcyril/dot`), and `dot calibrate` has measured real mainnet blocks
+  (`../../docs/calibrated-model-2026-10-21.json`). What is still not verified, and is said so in the
+  skill: **no Yellowstone endpoint has been reached live** by this build, so chain-wide gRPC detection
+  is proven against captured bytes and a correct connect sequence, not against a provider.

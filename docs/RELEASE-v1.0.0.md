@@ -93,9 +93,9 @@ dot limits --status  →  21 codes: 4 RESOLVED / 10 NARROWED / 7 UNRESOLVABLE_IN
   seed list; **no USD figure** without an operator-supplied price; **no inclusion proof** exists in
   core RPC, so `chain_verified` is corroboration; **no intent classification** — Dot ranks
   attention and never adjudicates guilt.
-- **Not published to npm.** The registry answers `npm publish` with 404 for lack of credentials;
-  install is verified from a packed tarball (`test/install.test.ts`), and `npm link` works with a
-  prefix you own.
+- **Install from npm is real as of 2026-10-22.** `@zeroxcyril/dot@1.0.0` is published; the
+  registry install, all six bins and the `npx` form were executed from outside the repo before the
+  README claimed any of it (`docs/blocked.md` §1 has the commands).
 - **`calibrate` is one endpoint on one day**, and the live artifacts above are from public
   endpoints that are not independent providers. A hostname is not proof of independence, and the
   report says so in the same block as the flag.

@@ -250,7 +250,7 @@ substitute is how a tool like this ships a lie.
 
 | blocked item | what would close it | still true after closing it |
 |---|---|---|
-| [§1 npm publish](./blocked.md#1-publishing-zeroxcyrildot-to-npm--blocked-registry-reachable-no-credentials) | Registry credentials for the `@zeroxcyril` scope: `npm publish --access public`. Packaging, install and all six bins are already proven by `test/install.test.ts`, which packs the tarball, installs it into a throwaway prefix, and executes every bin from there. | The `npx -y -p @zeroxcyril/dot` line in §6 becomes real instead of aspirational. |
+| [§1 npm publish](./blocked.md#1-publishing-zeroxcyrildot-to-npm--closed-published-2026-10-22) | **Closed on 2026-10-22:** `@zeroxcyril/dot@1.0.0` is live. Verified from outside the repo — registry install into a throwaway prefix reported `1.0.0` from all six bins, and `npx -y -p @zeroxcyril/dot dot-limits --status` printed the catalogue. | `test/skill.test.ts` cannot reach the registry (the suite is offline), so it pins something weaker and durable: every version the docs quote must equal `package.json`, and the docs may not go back to claiming the package is unpublished. |
 | [§2 live mainnet verification](./blocked.md#2-live-mainnet-verification--partly-unblocked-egress-returned-2026-10-21) | Already partly done: egress returned mid-session and `analyze`, `--verify`, `calibrate`, loader-index discovery and `--seeds` have all been run against mainnet. What remains is `blast-radius` at sweep scale and a second provider that is not another public endpoint. | Block retention is a property of the node, not of this session: the `-32015` refusal stands whatever else gets reachable. |
 | [§3 Yellowstone gRPC against a live endpoint](./blocked.md#3-yellowstone-grpc-against-a-live-provider--blocked-no-token-but-the-probe-found-a-bug-in-dot) | A token: `YELLOWSTONE_ENDPOINT=… YELLOWSTONE_TOKEN=… npx vitest run test/yellowstone-live.test.ts`, then `dot watch --yellowstone … --once` and read `feed.statsView()`. The probe already fixed the bug that made every attempt fail locally. | The native client still cannot distinguish a missing token from an absent service, so a *silent* filter still has to be caught by counting, not inferred. |
 | [§4 the bytecode diff against a compiled Anchor program](./blocked.md#4-bytecode-diff-validated-against-real-compiled-anchor-bytecode--measured-and-the-assumption-failed) | **Done, and it came back negative.** Both images now exist on this box and `test/bytecode.test.ts` runs against the committed one every time; the framework one is reproducible with the recorded command. Closing the *defect* needs a scanner that matches what LLVM emits, or IDL-only entrypoint reporting. | A contiguous scan locates 0/10 selectors in the hand-built-shape image and 0/6 in the anchor-lang image: Dot's entrypoint claims are proven on constructed images, not on compiled bytecode, and the diff now says `unscannable` instead of implying "nothing changed". |
@@ -258,8 +258,8 @@ substitute is how a tool like this ships a lie.
 ## 6. MCP integration
 
 ```bash
-npx -y -p @zeroxcyril/dot dot-mcp        # after publish
-node dist/cli/index.js mcp               # today
+npx -y -p @zeroxcyril/dot dot-mcp        # live on the registry since 2026-10-22
+node dist/cli/index.js mcp               # from a clone
 ```
 
 Four tools — `dot_blast_radius`, `dot_evaluate_upgrade`, `dot_limits`, `dot_watch_status` — all requiring
@@ -341,7 +341,7 @@ than quoting the spec, and confirms the (program, programData) pair from the pro
 **Re-measured, not inherited.** RPC egress came back on this box during this session, so
 `docs/blocked.md` was rewritten from measurement: what has now been run against mainnet, what was
 fixed as a result, and what still has never been exercised — the Geyser path has still never met a
-live endpoint, and the package is still unpublished (`E401`). The artifacts below are the measured
+live endpoint. The package has since been published (`@zeroxcyril/dot@1.0.0`, verified by installing it from the registry and running every bin); the artifacts below are the measured
 ones; everything else stays labelled as the claim it is.
 
 ## 8. Live verification
