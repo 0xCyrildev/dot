@@ -37,11 +37,14 @@ export type LimitStatus = {
 export const LIMIT_STATUS: LimitStatus[] = [
   {
     code: 'NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION',
-    state: 'RESOLVED',
+    state: 'NARROWED',
     change:
-      'src/rpc/yellowstone.ts subscribes by owner over Geyser, so every ProgramData write on the cluster is observed with no target list and no JSON-RPC polling.',
-    remains: 'Requires a Yellowstone/Geyser endpoint, which is a paid or self-run dependency. Core JSON-RPC still cannot do this.',
+      'src/rpc/yellowstone.ts subscribes by owner over Geyser, so every ProgramData write on the cluster can be observed with no target list and no JSON-RPC polling. The wire format is proven against real captured ProgramData bytes and the connect/subscribe sequence is now correct.',
+    remains:
+      'The transport has never received a frame from a provider: no credential exists on this box, and six endpoints probed without one all failed with one opaque native string (docs/blocked.md §3). Core JSON-RPC still cannot do this either way, and the live test in test/yellowstone-live.test.ts is skipped rather than passing when YELLOWSTONE_ENDPOINT is unset — so calling this RESOLVED would rest a green label on a file whose decisive test did not run.',
     tests: ['test/transports.test.ts', 'test/yellowstone-live.test.ts'],
+    deviation:
+      'The plan asked for this to be RESOLVED once the transport existed. It exists; what it has not done is receive anything. The state tracks the verification, not the code.',
     fix: 'Run against any Geyser provider, or run your own validator with the plugin.',
   },
   {

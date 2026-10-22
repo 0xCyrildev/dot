@@ -198,10 +198,17 @@ the specification at the reader.
 
 ## 5. What Dot does not see — in three states, not two
 
-`dot limits --status` prints 21 codes: **5 RESOLVED** (each names test files, and `verifyTestClaims()`
-exits 5 if a named test is missing or contains no `it()`), **9 NARROWED**, **7 UNRESOLVABLE_IN_CODE**.
+`dot limits --status` prints 21 codes: **4 RESOLVED** (each names test files, and `verifyTestClaims()`
+exits 5 if a named test is missing or contains no `it()`), **10 NARROWED**, **7 UNRESOLVABLE_IN_CODE**.
 The third category exists because a two-state table forces a bad choice between claiming a fix and filing
 a property of the chain under "not done".
+
+The count moved during this session in the direction that *reduced* Dot's claim: chain-wide upgrade
+detection had been marked RESOLVED because the Geyser transport exists, but its live test is gated on an
+endpoint this box does not have, so the green label was resting on a check that never ran. It is now
+NARROWED with the deviation recorded (`statusFor('NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION').deviation`), and
+`test/limits-status.test.ts` asserts it stays that way while no provider has answered. A taxonomy that
+only ever gains RESOLVED rows is marketing, not accounting.
 
 - `HISTORY_RETENTION` — **unresolvable in code.** Retention is a provider decision; three public
   mainnet endpoints in this build environment refused all ten trace fetches with `-32015` while

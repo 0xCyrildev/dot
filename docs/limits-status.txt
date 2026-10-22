@@ -1,12 +1,6 @@
-Limit status — 5 RESOLVED, 9 NARROWED, 7 UNRESOLVABLE_IN_CODE (21 codes)
+Limit status — 4 RESOLVED, 10 NARROWED, 7 UNRESOLVABLE_IN_CODE (21 codes)
 
 ## RESOLVED
-NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION
-  fixed: src/rpc/yellowstone.ts subscribes by owner over Geyser, so every ProgramData write on the cluster is observed with no target list and no JSON-RPC polling.
-  remains: Requires a Yellowstone/Geyser endpoint, which is a paid or self-run dependency. Core JSON-RPC still cannot do this.
-  fix:     Run against any Geyser provider, or run your own validator with the plugin.
-  tests:   test/transports.test.ts, test/yellowstone-live.test.ts
-
 ADDRESS_TABLE_RESOLUTION
   fixed: src/graph/keys.ts handles both compositions — node-inlined lookupTable keys and static+loaded-writable+loaded-readonly — and reports which one it used, plus any index it could not place.
   remains: A node that omits loadedAddresses entirely produces unresolvedIndexes rather than a wrong graph; the analysis is then partial and labelled.
@@ -30,6 +24,13 @@ ENDPOINT_CORROBORATION
   tests:   test/transports.test.ts, test/scout.test.ts
 
 ## NARROWED
+NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION
+  narrowed: src/rpc/yellowstone.ts subscribes by owner over Geyser, so every ProgramData write on the cluster can be observed with no target list and no JSON-RPC polling. The wire format is proven against real captured ProgramData bytes and the connect/subscribe sequence is now correct.
+  remains: The transport has never received a frame from a provider: no credential exists on this box, and six endpoints probed without one all failed with one opaque native string (docs/blocked.md §3). Core JSON-RPC still cannot do this either way, and the live test in test/yellowstone-live.test.ts is skipped rather than passing when YELLOWSTONE_ENDPOINT is unset — so calling this RESOLVED would rest a green label on a file whose decisive test did not run.
+  fix:     Run against any Geyser provider, or run your own validator with the plugin.
+  !deviation from plan: The plan asked for this to be RESOLVED once the transport existed. It exists; what it has not done is receive anything. The state tracks the verification, not the code.
+  tests:   test/transports.test.ts, test/yellowstone-live.test.ts
+
 GRPC_LIVE_PATH_UNREACHABLE
   narrowed: Raw protobuf frames built with the package’s own generated codec, carrying a captured mainnet ProgramData account, are decoded by the feed and still yield the correct upgrade authority; the feed now opens the channel before it subscribes (measured: without `connect()` the v9 client throws locally in ~1ms with a message that reads like a provider outage) and bounds a connect that never settles. The message shape is no longer assumed.
   remains: No provider has ever delivered a frame to this build. Six Geyser hostnames probed 2026-10-21 without a token; every failure surfaced as the same one opaque native string, and the control against a host with no Geyser service at all produced the identical text — so auth-missing, service-absent and filter-refused are indistinguishable from the client side. isReplay, keepalive and reconnect remain unexercised in the field, as does `--authority` server-side filtering against a real node.

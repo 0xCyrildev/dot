@@ -58,6 +58,21 @@ describe('limit status taxonomy', () => {
     expect(pre?.remains).toContain('no protocol-level timelock');
   });
 
+  it('does not call chain-wide detection resolved while the only live proof is skipped', () => {
+    // The plan asked for RESOLVED here as soon as the transport existed. It exists, and it has
+    // never received a frame from a provider — the live test in the named file is `skipIf`-ed on
+    // YELLOWSTONE_ENDPOINT, which this environment does not have. A green label resting on a test
+    // that did not run is the exact thing `verifyTestClaims` exists to refuse for missing files,
+    // so the state tracks the verification instead.
+    const g = statusFor('NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION');
+    expect(g?.state).toBe('NARROWED');
+    expect(g?.deviation).toContain('RESOLVED');
+    expect(g?.remains).toMatch(/never received a frame|skipped/);
+    // And the file it cites really does gate its live test rather than pass vacuously.
+    const live = readFileSync(join(ROOT, 'test', 'yellowstone-live.test.ts'), 'utf8');
+    expect(live).toMatch(/it\.skipIf\(!endpoint\)/);
+  });
+
   it('keeps the geyser path narrowed, not resolved, while no live endpoint has been reached', () => {
     const g = statusFor('GRPC_LIVE_PATH_UNREACHABLE');
     expect(g?.state).toBe('NARROWED');
