@@ -4,7 +4,7 @@ Released 2026-10-22 to npm as `@zeroxcyril/dot@1.2.0`. Supersedes [v1.0.0](./REL
 
 Suite at this tree: **425 passed / 3 skipped, 32 files**, `npx vitest run`, rc 0;
 `npx tsc -p tsconfig.json --noEmit` rc 0 (never piped — a pipe reports the pipe's status).
-`npm run prepublishOnly` (= `scripts/verify-install.sh`, from the packed tarball) before it: 6/6 bins execute and report `1.2.0`, 140 files, 1.2 MB unpacked. The `--from registry` form is the check to run *after* the upload lands, and is not what that sentence describes — this release note was written before the publish existed.
+`npm run prepublishOnly` (= `scripts/verify-install.sh`, from the packed tarball) before it: 6/6 bins execute and report `1.2.0`, 140 files. **And after the upload landed, the registry form was run too:** `bash scripts/verify-install.sh --from registry` → 6/6 bins executed from the installed published package, each reporting `1.2.0` (measured 2026-10-22, endpoint default registry).
 
 ## What is in it
 
@@ -82,4 +82,4 @@ npx -y -p @zeroxcyril/dot dot-limits --status         # no install; prints the l
 
 Tags point at the commits that produced the artifacts, not at the branch tip: `v1.1.0` sits at `91879ae`
 because that is the tree whose tarball npm served as 1.1.0, verified by what the published `dist/` does not
-contain. `v1.2.0` follows the same rule.
+contain. `v1.2.0` follows the same rule: it sits at `96b75da`, the commit whose tree was packed and uploaded (committed 17:46:11Z; the registry document was modified 17:52:41Z), and it was checked by unpacking the published tarball — `getParsedAccountInfo`, `checkSigners`, `readAuthorityQuorum`, `dist/cli/args.js` and `dist/state/priorStore.js` are all present in 1.2.0's `dist/`, and none of them was in 1.1.0's. This file's own registry-verification paragraph was written after the tag, so `git show v1.2.0` is the artifact and the later commit is the note about it.
