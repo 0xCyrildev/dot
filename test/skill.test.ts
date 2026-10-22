@@ -150,7 +150,7 @@ describe('no unverified claims', () => {
     }
     // And the publish claim in the root README matches the same version.
     const rootReadme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-    expect(rootReadme).toContain('Published as `@zeroxcyril/dot@1.0.0`');
+    expect(rootReadme).toContain(`Published as \`@zeroxcyril/dot@${manifest.version}\``);
   });
 
   it('states plainly that the geyser path was never run live', () => {

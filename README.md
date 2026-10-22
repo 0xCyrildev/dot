@@ -57,9 +57,12 @@ about the evidence Dot was allowed to gather, not an all-clear.
 
 ## Install and first run
 
-Published as `@zeroxcyril/dot@1.0.0` on 2026-10-22. Both lines below were run against the registry
-before they were written here — a global install into a throwaway prefix reported `1.0.0` from all six
-bins, and `npx` printed the limit catalogue:
+Published as `@zeroxcyril/dot@1.1.0`; the first release and its install evidence are recorded in
+`docs/blocked.md` §1. The claim is checked rather than asserted: `bash scripts/verify-install.sh
+--from registry` installs this version from the registry into a throwaway prefix and **executes all
+six bins**, and `npm publish` runs that same script as `prepublishOnly` — so a package whose bins do
+not run cannot be published by accident. Both forms below were executed against the registry before
+being written here:
 
 ```bash
 npm install -g @zeroxcyril/dot
@@ -83,8 +86,8 @@ Or from a local build of this checkout, which is the path `test/install.test.ts`
 installs into a throwaway prefix, executes all six bins):
 
 ```bash
-npm pack                                                    # -> zeroxcyril-dot-1.0.0.tgz
-npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-1.0.0.tgz
+npm pack                                                    # -> zeroxcyril-dot-1.1.0.tgz
+npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-1.1.0.tgz
 /tmp/dot-prefix/bin/dot-limits
 npm run verify-install     # or: build → pack → install into a throwaway prefix → exec all six bins
 ```
@@ -104,7 +107,7 @@ dot-limits                  dot-calibrate --rpc <url>
 ```
 
 Verified from the published package on 2026-10-22: all six names above were executed out of a
-registry install into a throwaway prefix, each reporting `1.0.0` — `dot-limits` printed the limit
+registry install into a throwaway prefix, each reporting the manifest version — `dot-limits` printed the limit
 catalogue and `dot-watch` complained about its own missing `--targets`. `dot` alone still hits
 graphviz first if `/usr/bin/dot` precedes your npm bin directory on PATH.
 

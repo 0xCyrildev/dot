@@ -17,6 +17,13 @@ bash scripts/verify-install.sh --from tarball         # build → pack → insta
 npx -y -p @zeroxcyril/dot dot-limits --status | head -1
 ```
 
+**1.1.0 supersedes this release record.** The registry evidence above was measured against 1.0.0.
+The re-verification for the new version is one command and it is what `npm publish` now runs before
+uploading: `bash scripts/verify-install.sh --from registry` (targets the manifest version). Until
+that line is re-run after a publish, every `1.0.0` measurement in this section describes the first
+release, not the current package — and the version drift that made them diverge was itself a bug
+(`dot --version` and the MCP handshake hardcoded the string; `src/version.ts` reads the manifest now).
+
 `scripts/verify-install.sh` is now the canonical form of that check, and `test/install.test.ts`
 drives the *script* rather than re-implementing the steps in TypeScript — the suite and the person
 publishing from a terminal walk one path, so a green test means the operator command works. Re-run

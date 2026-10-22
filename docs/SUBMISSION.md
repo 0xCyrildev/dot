@@ -1,6 +1,6 @@
 # Submission: Dot — agentic blast-radius analysis for the Solana on-chain supply chain
 
-**Repo:** <https://github.com/0xCyrildev/dot> · **npm:** `@zeroxcyril/dot@1.0.0`, published 2026-10-22 — the check is `bash scripts/verify-install.sh --from registry`, which installs it from the registry and executes all six bins (`docs/blocked.md` §1)
+**Repo:** <https://github.com/0xCyrildev/dot> · **npm:** `@zeroxcyril/dot@1.1.0` (first release 2026-10-22 as 1.0.0) — the check is `bash scripts/verify-install.sh --from registry`, which installs it from the registry and executes all six bins (`docs/blocked.md` §1)
 **Ecosystem:** Solana · **Language:** TypeScript, Node ESM · **Category:** dynamic analysis / upgrade & supply-chain monitoring
 **Interfaces:** CLI (6 bins), library, MCP server over stdio, agent skill (`skill/dot/`)
 **Evidence of being built against the chain:** [`docs/lessons.md`](./lessons.md) · [`docs/live-run-2026-10-21.json`](./live-run-2026-10-21.json)

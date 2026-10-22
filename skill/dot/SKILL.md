@@ -15,8 +15,8 @@ of every integrator that ever did a CPI into the program.
 
 ## Install
 
-Published: `@zeroxcyril/dot@1.0.0`. Both forms below were run against the registry before being
-written here: a global install into a throwaway prefix reported `1.0.0` from all six bins, and the
+Published: `@zeroxcyril/dot@1.1.0`. Both forms below were run against the registry before being
+written here: a global install into a throwaway prefix reported the manifest version from all six bins, and the
 `npx` form printed the limit catalogue.
 
 ```bash
