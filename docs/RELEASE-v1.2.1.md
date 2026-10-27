@@ -30,19 +30,28 @@ Tag the commit whose tree produced the tarball, not the branch tip.
 | limit catalogue | `node dist/cli/index.js limits --status` | 22 codes: 4 RESOLVED / 11 NARROWED / 7 UNRESOLVABLE_IN_CODE; "RESOLVED claims verified against existing test files: yes" |
 | manifest | `node -p "require('./package.json').version"` | 1.2.1 |
 
-## What it does not claim
+## Registry-side verification (measured 2026-10-27, after the publish)
 
-**1.2.1 is not on the registry as this file is written.** `npm view @zeroxcyril/dot versions` answered
-`0.0.0-stage, 1.0.0, 1.1.0, 1.2.0` and `dist-tags` answered `latest: 1.2.0`, both measured 2026-10-27. So
-the version lines in `README.md` and `skill/dot/SKILL.md` describe the tree being packed; they become
-facts only when the publish has happened.
+Before the publish this section said plainly that 1.2.1 was not on the registry — `dist-tags` answered
+`latest: 1.2.0` at that point, and a version line copied from the manifest is not evidence about npm. The
+publish has since happened, so the same two commands were re-run against the registry:
 
-The publish is the operator's step, not the build's: from this box `npm publish` reaches `EOTP` because
-the 2FA approval happens in a browser. Once it has, the check that closes this section is
+```
+npm view @zeroxcyril/dot dist-tags   → { latest: '1.2.1' }
+npm view @zeroxcyril/dot versions    → [ '0.0.0-stage', '1.0.0', '1.1.0', '1.2.0', '1.2.1' ]
 
-```bash
-npm view @zeroxcyril/dot dist-tags                              # expect latest: 1.2.1
-bash scripts/verify-install.sh --from registry                  # expect every bin to report 1.2.1
+bash scripts/verify-install.sh --from registry                     → rc 0
+  installs @zeroxcyril/dot@1.2.1 from npm into a throwaway prefix and executes every bin:
+  ✓ dot  ✓ dot-analyze  ✓ dot-watch  ✓ dot-mcp  ✓ dot-limits  ✓ dot-calibrate — all report 1.2.1
+  OK — 6/6 bins executed and reported 1.2.1
 ```
 
-and the result belongs in this file as a measured line, not as an inherited one.
+The artifact was opened rather than inferred: `registry.npmjs.org/@zeroxcyril/dot/-/dot-1.2.1.tgz` unpacks
+to a manifest at `1.2.1` and a 120-line `README.md` whose publish line names 1.2.1 — so the tree that
+produced it is the tagged one, and the short README is what the registry page now renders.
+
+**One nit this leaves open.** `docs/` is not in the package's `files` allowlist (`dist`, `skill`,
+`README.md`, `LICENSE`, `targets.example.json`), which is deliberate — the tarball carries no development
+notes — but it means the README's `docs/…` pointers resolve on GitHub and not inside an installed copy.
+That predates this release; the fix is to make them absolute `github.com/0xCyrildev/dot/blob/main/…` URLs,
+and it belongs with the next change to the README rather than in a tag that must match a shipped artifact.
