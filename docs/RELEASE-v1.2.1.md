@@ -50,8 +50,11 @@ The artifact was opened rather than inferred: `registry.npmjs.org/@zeroxcyril/do
 to a manifest at `1.2.1` and a 120-line `README.md` whose publish line names 1.2.1 — so the tree that
 produced it is the tagged one, and the short README is what the registry page now renders.
 
-**One nit this leaves open.** `docs/` is not in the package's `files` allowlist (`dist`, `skill`,
-`README.md`, `LICENSE`, `targets.example.json`), which is deliberate — the tarball carries no development
-notes — but it means the README's `docs/…` pointers resolve on GitHub and not inside an installed copy.
-That predates this release; the fix is to make them absolute `github.com/0xCyrildev/dot/blob/main/…` URLs,
-and it belongs with the next change to the README rather than in a tag that must match a shipped artifact.
+**One nit, and where it actually stands.** `docs/` is not in the package's `files` allowlist (`dist`,
+`skill`, `README.md`, `LICENSE`, `targets.example.json`), which is deliberate — the tarball carries no
+development notes — but it means a reader inside an installed copy, or on the npm page, cannot follow the
+README's `docs/…` pointers. The README now uses absolute `github.com/0xCyrildev/dot/blob/main/…` URLs for
+all six of them, each checked to return 200. That fix is on `main` and therefore **not in the 1.2.1
+artifact**, which was packed before it and still holds relative links; it reaches the registry with the
+next publish. The skew is recorded here rather than assumed away: `v1.2.1` tags the tree that produced the
+served tarball, and `main` is ahead of it by exactly this link fix.

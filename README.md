@@ -40,7 +40,7 @@ the evidence Dot was allowed to gather, not an all-clear. `SUSPECTED_MALICIOUS` 
 signature it can name — who funded the authority and when, whether the new bytecode answers to a selector
 the published interface denies, whether the timing fits the program's own cadence — never an intent it
 cannot read. It is tuned to be rare and measured that way: 0 screams across two live mainnet programs run
-with `--check-funding`, 1 on a constructed extreme case ([`docs/live-malice-2026-10-22.md`](docs/live-malice-2026-10-22.md)).
+with `--check-funding`, 1 on a constructed extreme case ([`docs/live-malice-2026-10-22.md`](https://github.com/0xCyrildev/dot/blob/main/docs/live-malice-2026-10-22.md)).
 
 ## Install and first run
 
@@ -71,7 +71,7 @@ dot mcp                            # MCP server over stdio
 
 From a clone, if you intend to change it: `npm ci && npm run build && node dist/cli/index.js analyze <id>`.
 The suite runs offline with no endpoint and no API key; the test count at each release is recorded in
-[`docs/RELEASE-v1.2.1.md`](docs/RELEASE-v1.2.1.md) rather than copied here, because a number in two
+[`docs/RELEASE-v1.2.1.md`](https://github.com/0xCyrildev/dot/blob/main/docs/RELEASE-v1.2.1.md) rather than copied here, because a number in two
 documents is a number that goes stale in two places.
 
 ## Two numbers, two questions
@@ -105,14 +105,14 @@ run already carries its own list.
 
 ## Where the rest lives
 
-- [`docs/INTERNALS.md`](docs/INTERNALS.md) — the agent loop and budget, where the numbers come from
+- [`docs/INTERNALS.md`](https://github.com/0xCyrildev/dot/blob/main/docs/INTERNALS.md) — the agent loop and budget, where the numbers come from
   (attribution, value-as-proxy, block batching, same-slot corroboration), full CLI/library/MCP reference,
   the source map, testing, and the live run.
-- [`docs/lessons.md`](docs/lessons.md) — what the chain taught Dot: three load-bearing assumptions that
+- [`docs/lessons.md`](https://github.com/0xCyrildev/dot/blob/main/docs/lessons.md) — what the chain taught Dot: three load-bearing assumptions that
   died on contact, including that `@solana/web3.js` cannot deserialize its own `jsonParsed` output.
-- [`docs/SUBMISSION.md`](docs/SUBMISSION.md) — the complete case, with the design decisions and the two
+- [`docs/SUBMISSION.md`](https://github.com/0xCyrildev/dot/blob/main/docs/SUBMISSION.md) — the complete case, with the design decisions and the two
   places they deviate from the brief.
-- [`skill/dot/SKILL.md`](skill/dot/SKILL.md) — how another agent should read a report, including the
+- [`skill/dot/SKILL.md`](https://github.com/0xCyrildev/dot/blob/main/skill/dot/SKILL.md) — how another agent should read a report, including the
   four kinds of nothing.
 
 Built by reading mainnet responses instead of reading docs about them. If it earns one thing, it is that
