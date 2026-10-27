@@ -4,73 +4,50 @@
 
 Solana programs are not artifacts, they are nodes in a graph. Program A calls Program B which calls
 Program C, and none of that relationship exists in any source tree. When B's bytecode is replaced on
-chain, the question every existing tool answers is about B. The question that actually costs money is
-about A and C: who calls the program that just changed, how often, and how much value routes through
-them.
+chain, every existing tool answers a question about B. The one that costs money is about A and C: who
+calls the program that just changed, how often, and how much value routes through them.
 
-Dot grew out of [Chase](https://github.com/0xCyrildev/Chase), the dynamic-analysis tool I built for
-Sui Move. Chase is the same bet — that behaviour tells you more than intent does — and I wanted
-something for Solana, so this is what I built rather than a port: a Move program's upgrade is a
-package publish, a Solana program's upgrade is a bytecode swap under one shared loader, and the part
-that has to be rebuilt for the second case is who is standing in the blast radius.
+Dot watches `BPFLoaderUpgradeable` for bytecode changes; when one lands it reconstructs the CPI
+dependency graph from real execution traces, prices the upgrade by who depends on the program and what
+moved through them, and emits a P0–P3 triage tier with the arithmetic that produced it, an evidence
+ledger with citable ids, and the list of things it could not see. It ships as a CLI, a library and an MCP
+server. Detection stays deterministic: a model is only ever asked to read an IDL diff and explain it,
+never to decide what the tier is — and its explanation is discarded if it cites evidence that was never
+issued.
+
+It grew out of [Chase](https://github.com/0xCyrildev/Chase), the dynamic-analysis tool I built for Sui
+Move — same bet that behaviour tells you more than intent, on a chain where an upgrade is a bytecode swap
+under one shared loader.
 
 ![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-The suite runs with no network and no API key (the only skips are gated live-endpoint tests),
-and `tsc --noEmit` / `npm run build` are clean. The count at each release is recorded in
-[`docs/RELEASE-v1.0.0.md`](docs/RELEASE-v1.0.0.md) rather than repeated here, because a number copied
-into two documents is a number that goes stale in two places.
-
-You give it a program id, or a list of them, or nothing at all in chain-wide mode, and it watches
-`BPFLoaderUpgradeable` for bytecode changes; when one lands it reconstructs the CPI dependency graph
-from real execution traces, prices the upgrade by who depends on the program and what moved through
-them, and emits a P0–P3 triage tier with the arithmetic that produced it, an evidence ledger with
-citable ids, and the list of things it could not see.
-
-It ships as a CLI, a library, and an MCP server. Detection stays deterministic: a model is only ever
-asked to read an IDL diff and explain it, never to decide what the tier is — and its explanation is
-discarded if it cites evidence that was never issued.
-
-```
-  ████   ████  ██  ██  █████
- ██  ██ ██  ██ ███ ██  ██
- ██  ██ ██  ██ ██ ███  ██
- ██████  ████  ██  ██  █████   blast radius, not vulnerabilities
-```
 
 ## What it does, and what it does not do
 
 | Phase | Tool | Question it answers |
 |---|---|---|
-| Before deployment | static analyzers (SolanaShield, Sentio) | what could this program do? |
-| At build time | dependency scanners (LoserLab) | is this npm package hostile? |
-| Per transaction | runtime monitors (GulfWatch) | is this known-bad transaction running? |
+| Before deployment | static analyzers | what could this program do? |
+| At build time | dependency scanners | is this npm package hostile? |
+| Per transaction | runtime monitors | is this known-bad transaction running? |
 | **At upgrade time** | **Dot** | **who breaks, and how much value was in the way?** |
 
-The gap is the on-chain supply chain. A program's callers are not in its repository, not in its IDL,
-and not in its dependency manifest. They are in the transaction history of every integrator that ever
-did a CPI into it — which is exactly what Dot reconstructs, and exactly what no isolated-program audit
-can see.
+A program's callers are not in its repository, its IDL or its dependency manifest. They are in the
+transaction history of every integrator that ever did a CPI into it — which is exactly what Dot
+reconstructs, and what no isolated-program audit can see.
 
-It does not read source, does not decompile, and does not decide whether an upgrade is malicious. A P0
-is a queue position: *posture and blast radius justify a human before the weekend*. A P3 is a statement
-about the evidence Dot was allowed to gather, not an all-clear.
+It does not read source, does not decompile, and does not decide whether an upgrade is malicious. A P0 is
+a queue position: *posture and blast radius justify a human before the weekend*. A P3 is a statement about
+the evidence Dot was allowed to gather, not an all-clear. `SUSPECTED_MALICIOUS` is likewise a structural
+signature it can name — who funded the authority and when, whether the new bytecode answers to a selector
+the published interface denies, whether the timing fits the program's own cadence — never an intent it
+cannot read. It is tuned to be rare and measured that way: 0 screams across two live mainnet programs run
+with `--check-funding`, 1 on a constructed extreme case ([`docs/live-malice-2026-10-22.md`](docs/live-malice-2026-10-22.md)).
 
 ## Install and first run
 
 Published as `@zeroxcyril/dot@1.2.0` — re-check with `npm view @zeroxcyril/dot dist-tags`, because the
-registry is the only source for that sentence, and this line has been wrong before. 1.2.0 adds the
-multisig-quorum read, `--check-signers`, `DOT_STATE_FILE` for MCP, and the `--threshold` fix; 1.1.0 was
-the release that carried the bytecode-scanner recovery, the danger ranking and the malice-signature axes.
-
-**`--threshold 2-of-3` needs 1.2.0.** In 1.1.0 the parser rejected the very form its own help text and
-error message quote — the grammar let `-?of` consume `-of` and left the trailing `-3` nowhere to go — so
-`2of3` and `2-3` worked while `2-of-3` did not. Fixed, and `test/cli-args.test.ts` pins the grammar now,
-which is how the bug was found at all. The first release and its install evidence are recorded in
-`docs/blocked.md` §1. The claim is checked rather than asserted: `bash scripts/verify-install.sh
---from registry` installs this version from the registry into a throwaway prefix and **executes all
-six bins**, and `npm publish` runs that same script as `prepublishOnly` — so a package whose bins do
-not run cannot be published by accident. Both forms below were executed against the registry before
-being written here:
+registry is the only source for that sentence and this line has been wrong before. `npm publish` runs
+`scripts/verify-install.sh` as `prepublishOnly`, which installs from the registry into a throwaway prefix
+and executes every bin, so a package whose bins do not run cannot be published by accident.
 
 ```bash
 npm install -g @zeroxcyril/dot
@@ -78,483 +55,65 @@ dot analyze <PROGRAM_ID> --secondary-rpc <url>     # dot itself is fine; /usr/bi
 npx -y -p @zeroxcyril/dot dot-limits --status      # no install at all; prints the limit catalogue
 ```
 
-The package declares a `files` allowlist, so the published tarball carries `dist/`, the skill, the
-README, the LICENSE and `targets.example.json` — 122 files, no development notes.
-
-From a clone, which is what you want if you intend to change it:
-
-```bash
-npm ci
-npm run build                                  # tsc, then postbuild chmods the bin
-node dist/cli/index.js analyze <PROGRAM_ID>
-node dist/cli/index.js limits                  # what Dot cannot see, as data
-```
-
-Or from a local build of this checkout, which is the path `test/install.test.ts` verifies (packs,
-installs into a throwaway prefix, executes all six bins):
-
-```bash
-npm pack                                                    # -> zeroxcyril-dot-1.2.0.tgz
-npm install -g --prefix /tmp/dot-prefix ./zeroxcyril-dot-1.2.0.tgz
-/tmp/dot-prefix/bin/dot-limits
-npm run verify-install     # or: build → pack → install into a throwaway prefix → exec all six bins
-```
-
-On a box where the global prefix is not writable, `npm config set prefix ~/.npm-global` plus
-`export PATH=~/.npm-global/bin:$PATH` then works with `npm link` or either install above; the default
-prefix on the build box resolves to a `/usr/local/lib/node_modules` that does not exist.
-
-**The `dot` bin name collides with graphviz, and this is not hypothetical.** `/usr/bin/dot` was present
-here, shadowed the linked binary, and `dot limits` printed graphviz's `can't open limits`. The package
-therefore also installs unambiguous aliases that dispatch on the invoked name:
-
-```bash
-dot-analyze <program>   dot-watch --targets targets.json   dot-mcp
-(dot | dot-analyze | dot-watch | dot-mcp | dot-limits | dot-calibrate)
-dot-limits                  dot-calibrate --rpc <url>
-```
-
-Verified from the published package on 2026-10-22: all six names above were executed out of a
-registry install into a throwaway prefix, each reporting the manifest version — `dot-limits` printed the limit
-catalogue and `dot-watch` complained about its own missing `--targets`. `dot` alone still hits
-graphviz first if `/usr/bin/dot` precedes your npm bin directory on PATH.
-
-Nothing in a `.env` is required. No API key is read unless you ask for model reasoning.
+**`dot` collides with graphviz.** `/usr/bin/dot` shadows the linked binary, so the package also installs
+unambiguous aliases — `dot-analyze`, `dot-watch`, `dot-mcp`, `dot-limits`, `dot-calibrate`. Nothing in a
+`.env` is required, and no API key is read unless you ask for model reasoning. A paid RPC endpoint is not
+optional in practice: the public endpoint has no transaction history, and a real run got `-32015` on all
+ten trace fetches — the report said so rather than printing an empty graph.
 
 ```bash
 dot analyze <program_id> --depth 2 --seeds seeds.example.json      # declared PDAs → custody
-dot analyze FuCKerMRwwExvo5bGFGjszhBQXcZicVqU4H9LZjqHbVf --seeds seeds-live.json   # the worked example
-dot blast-radius --since 2026-10-20 --min-value 100000000000 --authority-map authorities.json
 dot watch --targets targets.example.json --interval 30000 --secondary-rpc <url>
-dot watch --yellowstone <grpc-url> --per-event-rpc 50 --daily-rpc 5000
-dot calibrate --rpc <url>          # measures the cost model below instead of assuming it
+dot calibrate --rpc <url>          # measures the cost model instead of assuming it
 dot mcp                            # MCP server over stdio
 ```
 
-A paid RPC endpoint is not optional in practice. The public endpoint has no transaction history: a real
-run against it read the program state correctly and then got `-32015 Transaction history is not
-available` on all ten trace fetches, and the report said so — see [the live run](#the-live-run).
-
-## What we learned from the chain
-
-The long form is [`docs/lessons.md`](docs/lessons.md) — the contradictions below, the two refusals, the graphviz collision, and the
-bugs the test suite found in code I had written that same day. What follows is the condensed version, and
-it is the part that should decide whether this was built against the chain or against its documentation.
-
-This tool was written against measured mainnet responses, and three load-bearing assumptions in the
-original design died on contact. They are in the code as comments and in `dot limits` as documented
-blind spots, because the next person to build against these APIs will hit the same three.
-
-**1. `@solana/web3.js` cannot deserialize its own `jsonParsed` output.**
-
-```
-Connection.getTransaction(sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 })
-→ StructError: At path: meta.innerInstructions.0.instructions.0.accounts
-  -- Expected an array value, but received: undefined
-```
-
-Parsed instructions have no `accounts` field — the account set lives inside `parsed.info`. web3.js's
-superstruct marks it required. This throws on ordinary CPI-heavy mainnet traffic, reproduced on the
-first sample tried. Dot therefore owns its JSON-RPC layer (`src/rpc/transport.ts`, `src/rpc/client.ts`)
-and uses web3.js only for `PublicKey` and PDA derivation. A catch block that swallows this error turns
-into "no dependencies found", which is the most expensive possible accident for a blast-radius tool.
-
-**2. Instruction `accounts` are pubkeys in `jsonParsed` and indexes in `json`.**
-
-The spec said indexes. Mainnet says:
-
-```
-jsonParsed  → accounts: ["6tv7sUQ4R3fE9rnBX4w72oiiqSHqKF3KPvyubFNfazxd", …]
-json        → accounts: [1, 5, 12]
-```
-
-A parser that assumes indexes evaluates `keys["6tv7sUQ4…"]`, gets `undefined`, and reports that no lamports
-moved. Not a crash — a confident zero. `src/graph/keys.ts` accepts both, and `test/graph.test.ts`
-asserts that the two encodings of the same trace produce the same graph.
-
-**3. `ProgramData` is not the layout the SDK describes.**
-
-Measured across several mainnet programs: `ProgramData` account discriminant **3**, `Program` account
-discriminant **2** — the reverse of the `UpgradeableLoaderState` enum order — and the ELF magic at byte
-**45**, with `u64 + Option<Pubkey>` before it and **no `data_len` field**. Reading the documented layout
-lands you on `0x7f454c46` while claiming it is a length.
-
-So Dot does not trust offsets for anything load-bearing. Change detection hashes the **whole account**,
-which cannot miss a realloc or a rewrite regardless of layout; the bytecode-only hash is computed only
-after the ELF magic has been *found*, and an account where it is not found raises
-`UNKNOWN_PROGRAMDATA_LAYOUT` instead of hashing a guessed window. A watcher with a wrong offset does not
-error — it reports an all-clear forever.
-
-Two smaller ones: `stackHeight` is present on mainnet instructions but absent from web3.js v1's type
-declarations (it is what makes depth-3 attribution exact rather than guessed), and a Yellowstone v9
-subscription takes `owner` as a **base58 string** where the usual write-ups say bytes — pass bytes and
-you match nothing, which looks identical to a quiet chain.
-
-## What Dot is as an agent
-
-One run is five stages, and only one of them is expensive:
-
-```
-perceive  1 RPC call: read the ProgramData account, decode, diff
-decide    rule engine or model: is this worth a trace pull, and how big a sample
-act       the only expensive stage: signature walk + trace fetch + graph build
-evaluate  digest the graph, price exposure, price the evidence quality
-report    tier + components + evidence ledger + budget snapshot + limits
-```
-
-`decide` exists to avoid `act`. A multisig-held program with an already-known empty graph stops after
-**one RPC call** and still emits a complete report, budget snapshot included, recording what it declined
-to spend. That trace of skipped work is the difference between an agent and a script with a for-loop.
-
-The `Budget` (`maxRpcCalls`, `maxSignatures`, `maxLlmTokens`, `maxWallMs`) is enforced before every
-request, not after:
-
-- a refused call is still a decision, and appears in the run trace;
-- a **failed** call is a **spent** call — the node already did the work;
-- every **retry** is charged again, which is why `HttpTransport` is deliberately dumb and the client
-  owns the retry loop;
-- LLM tokens are estimated, reserved, then **settled against the API's billed usage**, so an
-  underestimate surfaces as `budget.overrun` instead of an invisible overdraft.
-
-When `act` runs out of budget mid-sample, Dot does not crash and does not silently report what it found.
-It keeps the partial graph, sets `stoppedAt: "act"`, and writes the reason into `cappedBy`.
-
-**It asks for budget rather than returning a thin answer.** When posture is a single key and the
-affordable sample cannot distinguish "no dependents" from "not in the sample", the run returns
-`needs_more_budget` with the number of calls it wants; the CLI prints
-`Re-run with --budget-rpc +N` and exits **4** — distinct from 3 (a stop was reached), 1 (it broke), and
-5 (the limit catalogue failed its own test). Coverage is measured against the sample the risk *wanted*,
-not the one the budget could afford, because that number is what caps the tier.
+From a clone, if you intend to change it: `npm ci && npm run build && node dist/cli/index.js analyze <id>`.
+The suite runs offline with no endpoint and no API key; the test count at each release is recorded in
+[`docs/RELEASE-v1.2.0.md`](docs/RELEASE-v1.2.0.md) rather than copied here, because a number in two
+documents is a number that goes stale in two places.
 
 ## Two numbers, two questions
 
-Every report carries a P0–P3 tier *and* a 0–100 **Upgrade Danger Ranking**. They answer different
-questions and are allowed to disagree: the tier is exposure (how much of this program's blast radius
-Dot was allowed to see), the ranking is queue position (how soon should a human open *this* upgrade).
+Every report carries a P0–P3 tier *and* a 0–100 **Upgrade Danger Ranking**. They are allowed to disagree:
+the tier is exposure (how much of the blast radius Dot was allowed to see), the ranking is queue position
+(how soon a human should open *this* upgrade).
 
-Four queue-position axes — authority posture 40, code delta 30, blast radius 30, behavioural anomaly 20 —
-plus three malice-signature axes (§ *Malice detection* below): authority integrity 30, code anomaly 20,
-timing anomaly 10. This is a real run, from `docs/live-malice-2026-10-22.md`, with the per-axis `·` caveat
-lines elided:
-
-```
-UPGRADE DANGER RANKING: LOW (Score: 10/100)
-  scored on 10 of 70 measurable axis points; no data for: codeDelta, behavior, authorityIntegrity, codeAnomaly, timingAnomaly
-├── Authority: PDA authority (JADaUV…) [+10/40]
-├── Code Delta: no bytecode diff performed [not assessed/30]
-├── Blast Radius: 0 direct, 0 transitive, routing 0 lamports in the sample (a per-transaction proxy, not a TVL figure) [+0/30]
-├── Behavior: no state file: Dot has no memory of this program [not assessed/20]
-├── Authority Integrity: PDA authority [not assessed/30]
-├── Code Anomaly: no bytecode diff performed [not assessed/20]
-└── Timing Anomaly: no timing evidence available [not assessed/10]
-```
-
-Three things about that block are load-bearing, and they are the reason it is not just a gauge:
-
-- **An axis with no data is `null`, not 0.** The run above never diffed bytecode, so the code-delta
-  axis is missing from the total rather than scored as "no changes" — and `CRITICAL` is withheld
-  whenever any of the four queue axes was unmeasured. A hole in the evidence must never be able to read
-  as a low score *or* a high one. The three signature axes sit outside that rule deliberately: they cost
-  RPC calls an operator may decline to spend.
-- **Several of the model's inputs do not exist on-chain, and the ranking says so in the axis that
-  wanted them.** A multisig's threshold lives in an account Dot does not decode, so 1-of-2 and 5-of-9
-  score the same (at the alarming end, printed as an assumption); "within 24h of a major ecosystem
-  event" has no feed in Dot, so that bonus has never been awarded by any score this build produced;
-  and the graph records *which* token mints a call touched, never how much, so the ×2 value
-  multiplier is lamports-only. `dot limits --status` carries the row as `DANGER_RANKING_UNMEASURED_INPUTS`.
-- **The axes sum to 180, not 100.** The score clamps; `rawScore` is kept next to it so a reader can
+- **An axis with no data is `null`, not 0.** Never having diffed bytecode keeps code delta out of the
+  total rather than scoring it as "no changes", and `CRITICAL` is withheld whenever any queue axis was
+  unmeasured. A hole in the evidence must not read as a low score *or* a high one.
+- **The axes sum to more than 100 and the score clamps**, with `rawScore` kept beside it so a reader can
   tell "several axes maxed out" from "the ceiling is arithmetic".
+- **Inputs that do not exist on-chain are named as such.** A multisig's threshold, ecosystem-event
+  proximity and routed *token* value are unmeasurable from traces; the ranking prints which axis wanted
+  them instead of guessing.
+- **It asks for budget rather than returning a thin answer.** When the affordable sample cannot
+  distinguish "no dependents" from "not in the sample", the run returns `needs_more_budget` with the calls
+  it wants and exits 4, carrying a falsifiable hypothesis (`--hypothesis-out`) that a better-funded run
+  re-tests. Zero from a check that did not run is not evidence of absence.
 
-**The ask is a claim, not a complaint.** Alongside the number, `needs_more_budget` carries a hypothesis
-derived from the signals this run actually saw — claim, evidence for, evidence against, a priced test
-plan and the one observation that would knock it down (`--hypothesis-out` writes it; `--hypothesis-file`
-carries it into a better-funded run, which re-tests it). A run that still cannot afford the plan, or that
-never sampled the thing the claim depends on, answers `not_testable` with the shortfall instead of
-`denied`: zero from a check that did not run is not evidence of absence.
+## What Dot cannot see
 
-**Malice detection — the signature of an attack, not the intent.** Dot cannot read what anybody meant, so
-the three signature axes read what the chain says: who funded the upgrade authority and when
-(`authority integrity`, probed only under `--check-funding`, because it buys calls the analysis did not
-need; a multisig's quorum is read from the node's own parser, and `--check-signers` dates its signer set,
-capped at five and reporting the cap), whether the new bytecode answers to a selector the published interface denies
-(`code anomaly`), and whether the timing fits this program's own cadence (`timing anomaly`). When the gate
-is satisfied the report prints `VERDICT: SUSPECTED_MALICIOUS` above the fold, in both watch summary lines,
-and in the ranking block — followed by the axis points that produced it, the gate that allowed it, and a
-sentence saying it is a heuristic. It is tuned to be rare: the brief's literal gate fired on the first
-ordinary upgrade tried, so the shipped gate also requires *positive* evidence, and `unscannable` — which
-only means Dot could not look — is deliberately not evidence. Two live mainnet programs with
-`--check-funding` on: 0 screams, and one of them had a genuinely recent-looking funding event that the
-node's retention would not let Dot call fresh (`docs/live-malice-2026-10-22.md`).
+`dot limits` prints the catalogue as data — each code with its full text and escape route — and
+`dot limits --status` puts every row in RESOLVED / NARROWED / UNRESOLVABLE_IN_CODE with the test behind
+each claim it marks RESOLVED. `dot limits --for <program_id>` answers it per program, from about four
+reads: `applies`, `probe_clean`, `not_probed`, `by_construction`. The history-retention, single-node-trust
+and Geyser-path rows are the ones that bite hardest on a public endpoint, and the report you get back
+names the ones that applied to it. They stay out of this README on purpose: prose copies rot, and every
+run already carries its own list.
 
-**Fair share under a firehose.** In chain-wide mode a deploy storm can spend the entire day's allowance
-on the first program that looks interesting. `UpgradeDispatcher` caps each investigation at
-`--per-event-rpc` (default 50) and the daemon at `--daily-rpc`, serves an authority handover or a
-vanished `ProgramData` ahead of a routine bytecode write, drains serially so a burst cannot become a
-thundering herd on one endpoint, and **counts every dropped event by reason**. Dropped is not clean.
+## Where the rest lives
 
-## Where the numbers come from
+- [`docs/INTERNALS.md`](docs/INTERNALS.md) — the agent loop and budget, where the numbers come from
+  (attribution, value-as-proxy, block batching, same-slot corroboration), full CLI/library/MCP reference,
+  the source map, testing, and the live run.
+- [`docs/lessons.md`](docs/lessons.md) — what the chain taught Dot: three load-bearing assumptions that
+  died on contact, including that `@solana/web3.js` cannot deserialize its own `jsonParsed` output.
+- [`docs/SUBMISSION.md`](docs/SUBMISSION.md) — the complete case, with the design decisions and the two
+  places they deviate from the brief.
+- [`skill/dot/SKILL.md`](skill/dot/SKILL.md) — how another agent should read a report, including the
+  four kinds of nothing.
 
-**Blast radius.** `meta.innerInstructions[].index` is a position in the *outer* instruction array, so the
-inner lists are folded onto their parent before any edge is attributed. Inside a group the list is flat:
-there are no parent pointers, so depth comes from `stackHeight`, then from the log tree
-(`Program <id> invoke [N]`), then from flat attribution. Each edge carries which method established it,
-and `attributionQuality: "flat"` means dependent counts are an **upper bound** because a depth-3 callee
-got credited to the transaction root. Two joins that only bite on real data: the log tree is matched to
-outer instructions **by ordinal, not by program id** (a transaction can invoke AToken twice), and self-CPI
-is a legitimate edge that gets kept, not filtered.
-
-**Value.** Positive balance deltas over the accounts a call touched, and token deltas from
-`pre/postTokenBalances`. Both are per-transaction, not per-edge: a swap through a router cannot be split
-into legs. Failed transactions are counted as interactions and excluded from value, because the runtime
-rolled them back. `lamportsRouted` is routed-through, never custody — program-held vault PDAs are not
-enumerated (`PDA_HOLDINGS_NOT_ENUMERATED`), and there is no price oracle, so no USD figure is printed
-unless an operator passes `--sol-usd`.
-
-**Block batching, stated honestly.** One `getBlock` replaces many `getTransaction` calls, so the call
-ceiling stops binding — and the payload becomes every transaction in the slot. Calls go down 10–100x,
-bytes go up 100–1000x, and on a busy program the *wall clock* gets worse. So `BlockBatcher` plans against
-an explicit cost model, prints both ratios in the report, refuses blocks above `maxBlockBytes`, and only
-chooses batching when calls are genuinely the binding constraint or the target's density justifies it.
-`dot calibrate` measures `avgBlockTransactions` and `avgTxnBytes` from your endpoint and writes the model;
-until then every rationale string says `defaults_unverified`. One measured model ships in the repo —
-`docs/calibrated-model-2026-10-21.json`, 506 tx/block and 18,040 bytes/transaction from `api.mainnet-beta`,
-six blocks, stamped with its date and endpoint — and it is worth knowing what it corrected: the defaults
-implied 2000x byte amplification where the real sample says 506x, so the assumed numbers were optimistic
-about batching *and* pessimistic about bandwidth at once. Supply a model with `--cost-model <file>` or pin
-one for every run with `DOT_COST_MODEL=<file>`; Dot will not silently adopt a file that merely happens to
-be in the working directory, because the report has to be able to name where its arithmetic came from.
-
-**Corroboration.** `--secondary-rpc` reads the `ProgramData` account from two endpoints and compares —
-but only at the *same slot*. Two nodes 40 slots apart holding different bytes is chain progress, not
-contradiction, and a check that cannot tell them apart cries wolf until everyone ignores it. Outcomes:
-`agreed`, `disagreed` (halt), `slot_mismatch` (inconclusive, continue), `single_source` (continue,
-labelled uncorroborated), `both_failed` (halt, no conclusion). Each endpoint gets its own `Budget`.
-
-**The halt is a different kind of P0.** On a same-slot contradiction, Dot stops and emits tier P0 with
-`tierSource: "integrity"`. That is not an exposure score and never passes through `scoreRisk`: the
-endpoints are the tool's input, and a contradiction is evidence about the tool, not the program. Nothing
-downstream of that read is trustworthy, including the absence of findings.
-
-**`--verify` asks the second node about the report, not just the upgrade.** `chain_verified`
-cross-checks four things: the `ProgramData` bytes, the `Program` pointer, a sample of the
-transactions the edges were built from (instructions, accounts, slot and balance deltas —
-`logMessages` excluded, because providers truncate differently), and what each node says
-about finality. Verdicts are `agree`, `contradict`, `inconclusive`, `unconfirmed`, and the
-last two are not the same sentence: measured on mainnet, two public endpoints asked
-*concurrently* still answered the same account read 9 slots apart, and `minContextSlot` is a
-lower bound, so a mutable account simply cannot be compared at one moment over plain RPC.
-Finalized transactions can. `chain_verified: true` therefore means two endpoints described
-the same chain, and the report prints beside it what that still does not prove — no
-inclusion proof exists in core RPC, and a hostname is not proof that the two endpoints are
-independent providers. See `docs/live-verify-2026-10-21.md` for a real run, which comes back
-`false` for exactly these reasons.
-
-## Usage
-
-### CLI
-
-```bash
-dot analyze <program_id> --sample 60 --depth 3            # one-off blast radius
-dot analyze <program_id> --mode real --idl new.json --prior-idl old.json
-dot analyze <program_id> --ingest blocks --cost-model dot-cost-model.json
-DOT_COST_MODEL=docs/calibrated-model-2026-10-21.json dot analyze <program_id>   # pin a measured model
-dot analyze <program_id> --unbounded                       # the mode Dot argues against
-dot watch --targets targets.example.json --state state.json
-dot watch --yellowstone <grpc-url> --authority <pubkey>   # chain-wide, no target list
-dot limits
-dot limits --status        # RESOLVED / NARROWED / UNRESOLVABLE_IN_CODE, each with its test files
-dot limits --for <program_id> --try-onchain-idl   # which limits are live for THIS program, from 4 reads
-dot replay --fixture tx.json --target <program>   # the real parser, offline, on captured bytes
-dot mcp
-```
-
-`--format md` renders the report, `--format json` emits the structure, `--out <dir>` writes both. Every
-report ends with the limits that applied to it and a line saying that Dot ranks attention rather than
-adjudicating guilt.
-
-### Library
-
-```ts
-import { Budget, SolanaClient, HttpTransport, RuleBasedDecision, Scout, BlockBatcher } from 'dot-blast-radius';
-
-const budget = new Budget({ maxRpcCalls: 60, maxSignatures: 60 });
-const client = new SolanaClient({ transport: new HttpTransport(url), budget });
-const scout = new Scout({
-  client, budget,
-  decision: new RuleBasedDecision(),
-  mode: 'rules',
-  batcher: new BlockBatcher(client, await loadCostModel('dot-cost-model.json'), budget),
-});
-const report = await scout.run({ program });
-report.tier; report.components; report.budget.spent.rpcCalls; report.limits;
-```
-
-`RuleBasedDecision` and `RealLlmDecision` implement one interface, and the Decide step is handed the
-same `EvidenceLedger` the report prints — an engine with its own ledger would reject every valid citation.
-
-### MCP server
-
-Two tools, so another agent can call Dot instead of reimplementing the fold:
-
-```bash
-dot mcp        # stdio
-DOT_STATE_FILE=~/.dot/state.json dot mcp   # also reads Dot's prior digests
-```
-
-An MCP run has no `--state`, so the behavioural axis is unmeasured and the ceiling rule withholds
-CRITICAL — a limit of the transport, not of the program. Point `DOT_STATE_FILE` at a state file written by
-`dot watch` and the axis becomes measurable. The server reads that file and never writes it.
-
-Four tools, all requiring a `budget` argument so an orchestrator cannot ask for an unbounded scan by
-accident:
-
-| Tool | Returns |
-|---|---|
-| `dot_blast_radius` | the CPI graph, dependents, value routed (marked `valueIsProxy: true`), tier, budget spent, triggered limits |
-| `dot_evaluate_upgrade` | one upgrade scored: posture, authority rotation, size move, blast radius, components |
-| `dot_limits` | the 20 codes in three states, plus `verifyTestClaims()` so a `RESOLVED` with a missing test is reported, not hidden |
-| `dot_watch_status` | the daemon's cursor and counters — and `available: false` with the path it looked at when nobody is watching |
-
-`test/mcp.test.ts` spawns the server over real stdio pipes and asserts every stdout line parses as
-JSON-RPC: one stray `console.log` corrupts the stream and the host drops the connection with no useful
-error, so diagnostics go to stderr and that is tested rather than hoped. Both return `isError` on a
-malformed address, and the `limits` codes in the structured result even when the run looked clean.
-
-```json
-{ "name": "dot_evaluate_upgrade",
-  "arguments": {
-    "program": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
-    "budget": { "maxRpcCalls": 60, "maxSignatures": 60, "maxLlmTokens": 0, "maxWallMs": 60000 },
-    "event": { "kind": "authority_change", "beforeAuthority": "…", "afterAuthority": "…" },
-    "knownMultisigs": ["…"] } }
-```
-
-`knownMultisigs` is required in spirit, not by schema: **nothing on chain tells you an authority is a
-2-of-3 multisig.** An unmapped authority is scored `unknown` or `program_derived` and treated as
-unreviewed, never as safe.
-
-## Architecture
-
-```
-src/
-  rpc/wire.ts          measured wire contract (accounts?: number|string, stackHeight?)
-  rpc/transport.ts     single-shot JSON-RPC. No retries: a retry is a second paid call
-  rpc/client.ts        Budget enforcement, byte accounting, -32015 → pruned
-  rpc/resilient.ts     two-endpoint same-slot corroboration
-  rpc/yellowstone.ts   chain-wide owner subscription
-  graph/keys.ts        key table: inlined / composed-from-loadedAddresses
-  graph/normalize.ts   the fold + stackHeight → logs → flat attribution
-  graph/builder.ts     edge aggregation, value attribution, failure exclusion
-  graph/batcher.ts     density-driven getBlock ingestion with an explicit cost model
-  state/programdata.ts structural decode, ELF validation, authority posture
-  state/programIndex.ts  ProgramData → program, three ways, cheapest first
-  watcher/watcher.ts     whole-account hashing, poll + accountSubscribe
-  watcher/dispatcher.ts  per-event caps, priority, counted drops
-  agent/budget.ts        reserve-before-act ceilings
-  agent/scout.ts         perceive → decide → act → evaluate → report
-  agent/rules.ts         deterministic engine: default AND fallback
-  agent/llm.ts           citation-gated model + IDL narrator
-  score/risk.ts          P0–P3, severity kept separate from confidence
-  limits.ts              honest limits as data
-test/fixtures/           one real mainnet transaction + measured ProgramData bytes
-```
-
-Dependencies: `@solana/web3.js` for `PublicKey` and PDA derivation only, `bs58`, `zod`, `commander`,
-`@modelcontextprotocol/sdk`, `@triton-one/yellowstone-grpc`. Node's global `fetch` and `WebSocket` do the
-transport. There is no RPC library in the read path, for the reason in contradiction #1.
-
-## The live run
-
-`docs/live-run-2026-10-21.json` is a real report from `dot analyze` against
-`api.mainnet-beta.solana.com`, from the `4be1b77` baseline build (two things the current build does
-differently: `limits` is no longer emitted twice, and `-32015` is now classified as pruned history
-rather than as a fetch error).
-
-```
-program     LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo
-programData HZcJwcJ2njPDxZtpPoKnF8v2w9QAx2rS7TdJPSRkbEhu   ← PDA derived, not looked up
-posture     EV-1: authority=JADaUV8… posture=program_derived bytecode=2229776B at offset 45
-            discriminant=3 layout=u64+option33 sha256=d296c6771cec9456…
-decision    proceed=true plan={"signatures":25}
-outcome     stoppedAt=act  cappedBy="only 0% of the planned sample was retrievable from the node"
-            rpc: 13 calls, 1 retry, 10×-32015
-tier        P3, confidence LOW
-```
-
-That is the interesting result. The upgrade-detection half worked against production: the PDA derivation
-matched the on-chain pointer, the layout decoded, the authority was classified off-curve. The trace half
-was refused by the endpoint, and Dot **said so instead of reporting an empty graph** — tier capped,
-confidence low, `HISTORY_RETENTION` triggered, and a `cappedBy` line that cannot be misread as
-"nobody depends on this". A tool that printed P3 with confidence "high" there would be lying about the
-ecosystem's supply chain in exactly the way this project exists to fix.
-
-## Testing
-
-```bash
-npm test           # the whole suite, offline; see docs/RELEASE-v1.0.0.md for the count at release
-npm run typecheck
-```
-
-Fixtures are real where reality matters: `test/fixtures/tx-nested.json` is a captured mainnet
-transaction (6 outer instructions, inner groups at index 2 and 4, 11 CPIs, `stackHeight: 2`), and
-`programdata-observed.json` holds the captured bytes that overturned the layout assumption, with the
-`metaqbxx` renounced-authority case included. The deep-nesting, log-only, failed-transaction and
-v0-address-table cases are generated by `test/fixtures/generate.mjs` against measured field shapes,
-because a public node that prunes history will not serve them on demand — and the generator says so in
-its header rather than passing them off as captures.
-
-The tests that earned their place all started as code reviews of my own assumptions:
-
-- *encoding equivalence* — pubkeys and indexes must produce the same graph;
-- *depth-3 attribution* — `C` belongs to `B`, not to the transaction root;
-- *budget stop mid-trace* — partial graph, `stoppedAt: act`, `cappedBy` set, no crash;
-- *unobserved ≠ zero* — no prior graph must force a trace pull, not permit an early exit;
-- *stoppedAt* — caught a hardcoded `'report'` that was hiding every budget-limited run;
-- *ledger injection* — caught an engine holding its own ledger, which would have made every model
-  citation fail forever;
-- *slot_mismatch ≠ disagreement* — caught corroboration that would have cried wolf on every upgrade;
-- *cursor no-progress* — caught a walk that hammered the endpoint when `until` was ignored.
-
-## Known limitations
-
-`dot limits` prints these with the full text and the escape route for each. They are output data, not
-prose in a README, so a report can name the ones that actually applied to it.
-
-**`dot limits --for <program>` answers it per program.** The catalogue is the general list; an operator
-asking "what am I not able to learn about *this* program" gets four statuses, from about four reads:
-`applies` (observed for this program — the node refused `-32015`, the IDL is nowhere, the Program account
-names a different ProgramData than the one Dot would read), `probe_clean` (one probe found nothing wrong
-*at the point it touched*, and the evidence column names that point — a retrievable newest signature says
-nothing about where the retention window ends), `not_probed` (this run could not look, priced in calls),
-and `by_construction` (a property of the data source or of intent, which no probe of one program could
-change). `docs/live-limits-for-2026-10-21.md` is a real run against a mainnet program upgraded that day:
-2 applies, 6 probed clean, 13 by construction, 4 RPC calls.
-
-| Code | What Dot cannot see |
-|---|---|
-| `HISTORY_RETENTION` | `getTransaction` returns whatever the node kept. Public endpoints retain days, not the program's life; **the live run above got `-32015` on every trace fetch**. A program whose integrators were busy last year can look dependent-free because the traces are gone. Fix: run continuously, or an archive node, or ingest from a live feed. |
-| `SINGLE_NODE_TRUST` | Every number is one endpoint's word. Providers cache, filter, lag, and rate-limit; across this build's sessions egress to public Solana RPC has flapped from working to `ETIMEDOUT` and back (re-measured 2026-10-21: mainnet-beta and publicnode answer `getHealth`, ankr needs a key). `--secondary-rpc` makes the load-bearing read corroborated, and `--verify` puts the second node's answer about the sampled transactions in the report as `chain_verified`. |
-| `NO_CHAIN_WIDE_UPGRADE_SUBSCRIPTION` | Core JSON-RPC has no "all loader accounts" feed — that is why `src/rpc/yellowstone.ts` exists. `accountSubscribe` is per-account. |
-| `GRPC_LIVE_PATH_UNREACHABLE` | **The Geyser wire format is proven against real captured bytes, but no provider has ever delivered a frame to this build.** Probed 2026-10-21 without a token: six hostnames failed, and a host with no Geyser service at all failed with the *identical* native string, so a missing token is indistinguishable from an absent endpoint from the client side. The probe did fix two real defects: `start()` never called `connect()`, and a hung `connect()` used to stall the watcher forever. |
-| `CPI_DEPTH_ATTRIBUTION` | `innerInstructions` is flat. Depth comes from `stackHeight` or logs; both are optional and logs truncate. `attributionQuality` always says which. |
-| `PARSED_INSTRUCTION_ACCOUNTS` | Parsed instructions have no `accounts` at all; Dot recovers them by matching `parsed.info` strings against the key table and tags every frame with how. |
-| `PROGRAMDATA_REVERSE_LOOKUP` | A `ProgramData` write does not name its program, and PDA derivation is one-way. Unresolvable events are counted and skipped, never guessed. |
-| `NO_IDL_CONTRACT` | No mandatory on-chain interface. No IDL → no semantic claim; `narrative.refused = "idl_unavailable"`. |
-| `BYTECODE_SCAN_BLIND_ON_COMPILED_IMAGES` | **Measured, refuted, then fixed — and still a limit.** A contiguous scan for `sha256("global:<name>")[0..8]` locates 0 of 10 selectors in a compiler-emitted SBF image and 0 of 6 in an anchor-lang 0.30.1 program, because LLVM splits them into `mov32`/`hor64` immediate pairs or dissolves them into byte-wise compare trees. `src/state/sbfSelectors.ts` now decodes `.text` and recovers 10/10 and 6/6 on both committed images (0 of 30 on names neither program implements). What stays narrow: an emission shape the recovery has not been shown on reports `confidence: "unscannable"` rather than silence, and two images are not a corpus. `docs/blocked.md` §4 has both images and the commands. |
-| `VALUE_IS_PROXY` | Routed value is a per-transaction upper-bound proxy; a swap cannot be split into legs. |
-| `PDA_HOLDINGS_NOT_ENUMERATED` | Vault custody is invisible without a seed list or an indexer. Routed ≠ held. `--seeds` is exercised live (`seeds-live.json`, `docs/live-seeds-2026-10-21.json`): 5 accounts read, 1 absent, 1 unresolved seed, one batched call — and the figures are a snapshot of live accounts, not a constant. |
-| `FAILED_TRANSACTIONS_ROLLED_BACK` | Failed CPIs are populated in the response but moved nothing; counted separately. |
-| `SIGNATURE_INDEX_IS_KEY_BASED` | The index matches account keys, not roles, so samples contain noise. |
-| `ADDRESS_TABLE_RESOLUTION` | Wrong v0 key composition misattributes edges silently. `keys.method` is reported. |
-| `BLOCK_FETCH_AMPLIFICATION` | Batching cuts calls and multiplies bytes; the model is labelled until you calibrate it. A measured one ships (`docs/calibrated-model-2026-10-21.json`) — one endpoint, one day, six blocks. |
-| `FEED_BACKPRESSURE` | Under a storm the dispatcher drops events. Dropped has a counter; it is not clean. |
-| `PRE_DEPLOY_PARTIAL` | Narrowed: `STAGED_UPGRADE` now fires when an image is uploaded but not yet live, with hash, size and staging authority. Still unseen: what the image *does*, the program it belongs to until it lands, and any governance delay — `finalizeEta` says `immediate_unless_governed` rather than inventing one. |
-| `FINALITY_VS_LATENCY` | Reads are `finalized`, which costs minutes of detection. |
-| `ENDPOINT_CORROBORATION` | Comparison is only valid same-slot; a lone live endpoint is `single_source`, not verified. |
-| `NO_MALICE_DETECTION` | A tier is a queue position, and so is `SUSPECTED_MALICIOUS`: the scream reports a structural signature it can name, never an intent it cannot read. Absence of a finding is not a clean bill of health. |
-
----
-
-Dot was built by reading mainnet responses instead of reading docs about them. If it earns one thing,
-it is that the on-chain supply chain is a graph that can be reconstructed from traces, and that a tool
-which cannot tell you what it failed to see is worse than no tool at all.
+Built by reading mainnet responses instead of reading docs about them. If it earns one thing, it is that
+the on-chain supply chain is a graph reconstructable from traces, and that a tool which cannot tell you
+what it failed to see is worse than no tool at all.
