@@ -1,6 +1,6 @@
 # Submission: Dot — agentic blast-radius analysis for the Solana on-chain supply chain
 
-**Repo:** <https://github.com/0xCyrildev/dot> · **npm:** `@zeroxcyril/dot@1.2.0` is what the registry serves (`npm view @zeroxcyril/dot dist-tags`; each release is checked by unpacking its own tarball, so this line is not inherited from the manifest). Install evidence is checked rather than asserted: `bash scripts/verify-install.sh --from registry` installs from the registry and executes all six bins (`docs/blocked.md` §1). The tags point at the commits that produced the artifacts, not at `main`: `v1.1.0` sits at `91879ae` and `v1.2.0` at `96b75da`, each verified by unpacking its own tarball and looking for symbols that the later tree added — 1.2.0's `dist/` contains `cli/args.js`, `state/priorStore.js`, `getParsedAccountInfo` and `checkSigners`; 1.1.0's contains none of them. `docs/RELEASE-v1.2.0.md` carries the release record and the suite count.
+**Repo:** <https://github.com/0xCyrildev/dot> · **npm:** `@zeroxcyril/dot@1.2.1` is what the registry serves (`npm view @zeroxcyril/dot dist-tags`, re-measured 2026-10-27; each release is checked by unpacking its own tarball, so this line is not inherited from the manifest). Install evidence is checked rather than asserted: `bash scripts/verify-install.sh --from registry` installs from the registry and executes all six bins (`docs/blocked.md` §1). The tags point at the commits that produced the artifacts, not at `main`: `v1.1.0` sits at `91879ae`, `v1.2.0` at `96b75da` and `v1.2.1` at `b845d4a`, each verified by unpacking its own tarball and looking for symbols that the later tree added — 1.2.0's `dist/` contains `cli/args.js`, `state/priorStore.js`, `getParsedAccountInfo` and `checkSigners`; 1.1.0's contains none of them. `docs/RELEASE-v1.2.1.md` carries the release record and the suite count; 1.2.1 is a docs-only patch whose `src/`, `test/` and `scripts/` are byte-identical to the 1.2.0 tree (`git diff --stat 96b75da b845d4a -- src/ test/ scripts/` reports nothing), and what changed is that the README was cut from 560 lines to 120 with the long form moved to `docs/INTERNALS.md`.
 **Ecosystem:** Solana · **Language:** TypeScript, Node ESM · **Category:** dynamic analysis / upgrade & supply-chain monitoring
 **Interfaces:** CLI (6 bins), library, MCP server over stdio, agent skill (`skill/dot/`)
 **Evidence of being built against the chain:** [`docs/lessons.md`](./lessons.md) · [`docs/live-run-2026-10-21.json`](./live-run-2026-10-21.json)
@@ -357,7 +357,7 @@ than quoting the spec, and confirms the (program, programData) pair from the pro
 **Re-measured, not inherited.** RPC egress came back on this box during this session, so
 `docs/blocked.md` was rewritten from measurement: what has now been run against mainnet, what was
 fixed as a result, and what still has never been exercised — the Geyser path has still never met a
-live endpoint. The package is published (`@zeroxcyril/dot@1.2.0`, verified by installing from the registry and running every bin); the artifacts below are the measured
+live endpoint. The package is published (`@zeroxcyril/dot@1.2.1`, verified by installing from the registry and running every bin); the artifacts below are the measured
 ones; everything else stays labelled as the claim it is.
 
 ## 8. Live verification
