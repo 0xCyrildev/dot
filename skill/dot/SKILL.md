@@ -15,7 +15,7 @@ of every integrator that ever did a CPI into the program.
 
 ## Install
 
-Published on the registry: `@zeroxcyril/dot@1.2.0` — verify with `npm view @zeroxcyril/dot dist-tags`,
+Published on the registry: `@zeroxcyril/dot@1.2.1` — verify with `npm view @zeroxcyril/dot dist-tags`,
 which is the only honest source for that sentence. It carries the danger ranking, the malice-signature
 axes, the quorum read and `DOT_STATE_FILE`. Versions before 1.2.0 reject `--threshold 2-of-3` (the shipped
 grammar did not accept the trailing dash its own help text quotes); type `2of3` or `2-3` on 1.0.0/1.1.0.

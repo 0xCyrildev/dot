@@ -1,6 +1,6 @@
 {
   "name": "@zeroxcyril/dot",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Agentic Solana blast-radius analyzer: watches BPFLoaderUpgradeable upgrades and rebuilds the on-chain CPI supply chain from execution traces.",
   "type": "module",
   "engines": {

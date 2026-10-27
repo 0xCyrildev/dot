@@ -44,10 +44,11 @@ with `--check-funding`, 1 on a constructed extreme case ([`docs/live-malice-2026
 
 ## Install and first run
 
-Published as `@zeroxcyril/dot@1.2.0` — re-check with `npm view @zeroxcyril/dot dist-tags`, because the
+Published as `@zeroxcyril/dot@1.2.1` — re-check with `npm view @zeroxcyril/dot dist-tags`, because the
 registry is the only source for that sentence and this line has been wrong before. `npm publish` runs
-`scripts/verify-install.sh` as `prepublishOnly`, which installs from the registry into a throwaway prefix
-and executes every bin, so a package whose bins do not run cannot be published by accident.
+`scripts/verify-install.sh` as `prepublishOnly`: it builds, packs this tree, installs the resulting
+tarball into a throwaway prefix and executes every bin, so a package whose bins do not run cannot be
+published by accident. Pass `--from registry` to aim the same check at what the registry already serves.
 
 ```bash
 npm install -g @zeroxcyril/dot
@@ -70,7 +71,7 @@ dot mcp                            # MCP server over stdio
 
 From a clone, if you intend to change it: `npm ci && npm run build && node dist/cli/index.js analyze <id>`.
 The suite runs offline with no endpoint and no API key; the test count at each release is recorded in
-[`docs/RELEASE-v1.2.0.md`](docs/RELEASE-v1.2.0.md) rather than copied here, because a number in two
+[`docs/RELEASE-v1.2.1.md`](docs/RELEASE-v1.2.1.md) rather than copied here, because a number in two
 documents is a number that goes stale in two places.
 
 ## Two numbers, two questions
